@@ -1,5 +1,6 @@
 import torch
 
+
 def delta_hyperbolicity_iterative(distance_matrix):
     n = distance_matrix.shape[0]
     device = distance_matrix.device
@@ -11,11 +12,7 @@ def delta_hyperbolicity_iterative(distance_matrix):
         for y in range(n):
             for z in range(n):
                 # Gromov product formula: (y,z)_x = 1/2 * (d(x,y) + d(x,z) - d(y,z))
-                gromov_products[x, y, z] = 0.5 * (
-                    distance_matrix[x, y] +
-                    distance_matrix[x, z] -
-                    distance_matrix[y, z]
-                )
+                gromov_products[x, y, z] = 0.5 * (distance_matrix[x, y] + distance_matrix[x, z] - distance_matrix[y, z])
 
     delta = 0.0
 
@@ -23,8 +20,7 @@ def delta_hyperbolicity_iterative(distance_matrix):
         for x in range(n):
             for y in range(n):
                 for z in range(n):
-                    current_delta = min(
-                        gromov_products[w, x, y], gromov_products[w, y, z]) - gromov_products[w, x, z]
+                    current_delta = min(gromov_products[w, x, y], gromov_products[w, y, z]) - gromov_products[w, x, z]
                     delta = max(delta, current_delta)
 
     # Calculate diameter for the relative delta
@@ -48,8 +44,7 @@ def delta_hyperbolicity_parallel(distance_matrix):
     d_xy = distance_matrix.unsqueeze(0).expand(n, n, n)  # d(x,y) for all pairs
 
     # Calculate Gromov products: (y,z)_x = 1/2 * (d(x,y) + d(x,z) - d(y,z))
-    gromov_products = 0.5 * \
-        (d_xw + d_yw.transpose(1, 2) - d_xy.transpose(0, 2))
+    gromov_products = 0.5 * (d_xw + d_yw.transpose(1, 2) - d_xy.transpose(0, 2))
 
     # Step 2: Compute the min-max matrix product for the 4-point condition
     delta_values = torch.zeros(n, device=device)
@@ -108,11 +103,7 @@ def calculate_delta_hyperbolicity_optimized(distance_matrix):
     A = torch.zeros((n, n), device=device)
     for x in range(n):
         for y in range(n):
-            A[x, y] = 0.5 * (
-                distance_matrix[w, x] +
-                distance_matrix[w, y] -
-                distance_matrix[x, y]
-            )
+            A[x, y] = 0.5 * (distance_matrix[w, x] + distance_matrix[w, y] - distance_matrix[x, y])
 
     # Calculate min-max matrix product
     A_min_max = min_max_matrix_product(A)
@@ -126,14 +117,15 @@ def calculate_delta_hyperbolicity_optimized(distance_matrix):
 
     return delta.item(), delta_relative.item()
 
+
 def approx_delta_hyperbolicity(dists: torch.Tensor):
     """
-    computes delta hyperbolicity value from distance matrix for a single value rather than the whole 4-tensor as done in image krukov paper & repo. 
+    computes delta hyperbolicity value from distance matrix for a single value rather than the whole 4-tensor as done in image krukov paper & repo.
     Switched to using torch rather than numpy
     """
     p = 0
-    row = dists[p, :].unsqueeze(0) # (1,N)
-    col = dists[:, p].unsqueeze(1) # (N,1)
+    row = dists[p, :].unsqueeze(0)  # (1,N)
+    col = dists[:, p].unsqueeze(1)  # (N,1)
     XY_p = 0.5 * (row + col - dists)
 
     # Create expanded tensors for minimum comparison
@@ -147,4 +139,5 @@ def approx_delta_hyperbolicity(dists: torch.Tensor):
     maxmin = torch.max(minimum_vals, dim=1)[0]
 
     # Calculate final result
-    return torch.max(maxmin - XY_p)
+    # return torch.max(maxmin - XY_p)
+    return maxmin - XY_p
