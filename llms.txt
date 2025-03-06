@@ -1,0 +1,959 @@
+# Manify: Product Space Machine Learning and Manifold-based Embeddings
+
+Manify is a Python library for generating graph/data embeddings and performing machine learning in product spaces with mixed curvature (hyperbolic, Euclidean, and spherical spaces). It provides tools for manifold creation, curvature estimation, embedding generation, and predictive modeling that respects the underlying geometry of complex data.
+
+## Core Features
+
+- Create and manipulate manifolds with different curvatures (hyperbolic, Euclidean, spherical)
+- Build product manifolds by combining multiple spaces with different geometric properties
+- Learn embeddings of data in these manifolds
+- Train machine learning models that respect the geometry of the embedding space
+- Generate synthetic data with known geometric properties for benchmarking
+
+## Installation
+
+```bash
+pip install manify
+```
+
+### Requirements
+
+The library depends on:
+- torch
+- geoopt
+- networkx
+- numpy
+- pandas
+- matplotlib
+- jaxtyping
+- tqdm
+- cvxpy
+- scikit-learn
+- anndata
+- basemap
+
+## Core Components
+
+### Manifolds
+
+The foundation of manify is the `Manifold` class which represents hyperbolic, Euclidean, or spherical spaces. The `ProductManifold` class extends this to support combinations of multiple manifolds with different curvatures.
+
+```python
+from manify.manifolds import Manifold, ProductManifold
+
+# Create a hyperbolic manifold with curvature -1 and dimension 2
+hyperbolic_manifold = Manifold(curvature=-1, dim=2)
+
+# Create a product manifold with mixed curvature
+signature = [(-1, 2), (0, 3), (1, 2)]  # [(curvature, dimension), ...]
+product_manifold = ProductManifold(signature=signature)
+```
+
+Key operations on manifolds include:
+- Distance calculation (`pm.dist`, `pm.pdist`, `pm.pdist2`)
+- Inner products (`pm.inner`)
+- Sampling from manifold distributions (`pm.gaussian_mixture`)
+- Logarithmic and exponential maps (`pm.log_map`, `pm.exp_map`)
+- Parallel transport (`pm.transport`)
+
+### Embedders
+
+The library offers several approaches to embed data into manifolds:
+
+#### Coordinate Learning
+
+Learn coordinates directly by optimizing to preserve input distances:
+
+```python
+from manify.embedders import coordinate_learning
+
+# Train coordinates to preserve input distances
+embeddings, losses = coordinate_learning.train_coords(
+    pm=product_manifold,
+    dists=distance_matrix,
+    burn_in_iterations=2000,
+    training_iterations=18000,
+    learning_rate=1e-2
+)
+```
+
+#### Variational Autoencoders (VAE)
+
+Embed data using neural networks:
+
+```python
+from manify.embedders import vae
+
+# Define custom encoder and decoder networks
+class Encoder(torch.nn.Module):
+    def __init__(self, pm, input_dim):
+        super().__init__()
+        self.pm = pm
+        self.input_dim = input_dim
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 64),
+            torch.nn.ReLU(),
+        )
+        
+        # Create separate heads for each manifold component
+        total_dim = sum(dim for _, dim in pm.signature)
+        self.mu_heads = torch.nn.ModuleList([
+            torch.nn.Linear(64, dim) 
+            for _, dim in pm.signature
+        ])
+        self.logvar_heads = torch.nn.ModuleList([
+            torch.nn.Linear(64, dim) 
+            for _, dim in pm.signature
+        ])
+    
+    def forward(self, x):
+        x = self.layers(x)
+        mus = [head(x) for head in self.mu_heads]
+        logvars = [head(x) for head in self.logvar_heads]
+        return mus, logvars
+
+class Decoder(torch.nn.Module):
+    def __init__(self, pm, output_dim):
+        super().__init__()
+        self.pm = pm
+        self.output_dim = output_dim
+        
+        total_dim = sum(dim for _, dim in pm.signature)
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(total_dim, 64),
+            torch.nn.ReLU(),
+            torch.nn.Linear(64, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, output_dim),
+        )
+    
+    def forward(self, z):
+        # Concatenate all components
+        z_cat = torch.cat(z, dim=1)
+        return self.layers(z_cat)
+
+# Create VAE
+input_dim = X_train.shape[1]  # Input data dimension
+myvae = vae.ProductSpaceVAE(
+    pm=product_manifold,
+    encoder=Encoder(product_manifold, input_dim),
+    decoder=Decoder(product_manifold, input_dim),
+    beta=0.5,
+    n_samples=16
+)
+
+# Train VAE
+optimizer = torch.optim.Adam(myvae.parameters(), lr=1e-3)
+num_epochs = 100
+batch_size = 64
+
+for epoch in range(num_epochs):
+    train_loss = 0
+    
+    # Training loop
+    myvae.train()
+    for batch_idx in range(0, len(X_train), batch_size):
+        batch_X = X_train[batch_idx:batch_idx + batch_size]
+        
+        optimizer.zero_grad()
+        recon_batch, kl_div = myvae(batch_X)
+        loss = myvae.loss_function(recon_batch, batch_X, kl_div)
+        loss.backward()
+        train_loss += loss.item()
+        optimizer.step()
+    
+    print(f'Epoch {epoch}, Loss: {train_loss / len(X_train):.4f}')
+
+# Generate embeddings for train and test data
+myvae.eval()
+with torch.no_grad():
+    train_embeddings = myvae.encode(X_train)
+    test_embeddings = myvae.encode(X_test)
+```
+
+#### Siamese Networks
+
+Learn embeddings by training on pairs of examples:
+
+```python
+from manify.embedders import siamese
+
+# Create a siamese network for embedding
+siam_net = siamese.SiameseNetwork(
+    input_dim=X.shape[1],
+    pm=product_manifold,
+    hidden_dims=[128, 64, 32],
+    margin=0.2
+)
+
+# Train with known similarities/distances
+optimizer = torch.optim.Adam(siam_net.parameters(), lr=1e-3)
+num_epochs = 50
+batch_size = 128
+
+# Prepare pairs with similarity labels (1: similar, 0: dissimilar)
+pairs, sim_labels = siamese.generate_pairs(X, y, num_pairs=10000)
+
+for epoch in range(num_epochs):
+    siam_net.train()
+    train_loss = 0
+    
+    for batch_idx in range(0, len(pairs), batch_size):
+        pair_batch = pairs[batch_idx:batch_idx + batch_size]
+        label_batch = sim_labels[batch_idx:batch_idx + batch_size]
+        
+        x1 = pair_batch[:, 0]
+        x2 = pair_batch[:, 1]
+        
+        optimizer.zero_grad()
+        loss = siam_net.loss(x1, x2, label_batch)
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item()
+    
+    print(f'Epoch {epoch}, Loss: {train_loss / len(pairs):.4f}')
+
+# Generate embeddings
+siam_net.eval()
+with torch.no_grad():
+    embeddings = siam_net.get_embedding(X)
+```
+
+### Predictors
+
+Once data is embedded, you can use geometry-aware predictors:
+
+#### Decision Trees and Random Forests
+
+```python
+from manify.predictors.decision_tree import ProductSpaceDT, ProductSpaceRF
+
+# Create and train a decision tree
+tree = ProductSpaceDT(
+    pm=product_manifold, 
+    max_depth=3,
+    min_samples_split=10,
+    use_special_dims=True,  # Use special dimensions for easier visualization
+    ablate_midpoints=False  # Whether to use midpoints in splits
+)
+tree.fit(X_train, y_train)
+
+# Evaluate
+train_score = tree.score(X_train, y_train)
+test_score = tree.score(X_test, y_test)
+print(f"Train score: {train_score:.4f}, Test score: {test_score:.4f}")
+
+# Make predictions
+predictions = tree.predict(X_test)
+
+# Random forest
+forest = ProductSpaceRF(
+    pm=product_manifold, 
+    n_estimators=100,
+    max_depth=5,
+    max_features="sqrt",
+    bootstrap=True
+)
+forest.fit(X_train, y_train)
+forest_score = forest.score(X_test, y_test)
+print(f"Random Forest score: {forest_score:.4f}")
+```
+
+#### SVM
+
+```python
+from manify.predictors import svm
+
+# Create and train SVM
+pm_svm = svm.ProductSpaceSVM(
+    pm=product_manifold,
+    C=1.0,
+    kernel="gaussian",  # Options: "gaussian", "linear"
+    gamma=0.1  # For Gaussian kernel
+)
+pm_svm.fit(X_train, y_train)
+
+# Evaluate
+svm_score = pm_svm.score(X_test, y_test)
+print(f"SVM score: {svm_score:.4f}")
+```
+
+#### Perceptron
+
+```python
+from manify.predictors import perceptron
+
+# Create and train Perceptron
+pm_perceptron = perceptron.ProductSpacePerceptron(
+    pm=product_manifold,
+    learning_rate=0.01,
+    max_iter=1000
+)
+pm_perceptron.fit(X_train, y_train)
+
+# Evaluate
+perceptron_score = pm_perceptron.score(X_test, y_test)
+print(f"Perceptron score: {perceptron_score:.4f}")
+```
+
+#### Graph Convolutional Network (GCN)
+
+```python
+from manify.predictors import kappa_gcn
+
+# First create adjacency matrix from pairwise distances
+dists = product_manifold.pdist2(X_train)
+max_dist = dists.max()
+dists = dists / max_dist  # Normalize distances
+
+# Create adjacency matrix using exponential kernel
+A = torch.exp(-dists)
+
+# Create and train GCN
+gcn = kappa_gcn.KappaGCN(
+    pm=product_manifold,
+    input_dim=X_train.shape[1],
+    hidden_dims=[32, 16],
+    output_dim=len(torch.unique(y_train)),
+    A=A,  # Adjacency matrix
+    dropout=0.5,
+    activation=torch.nn.ReLU()
+)
+
+# Training
+optimizer = torch.optim.Adam(gcn.parameters(), lr=0.01)
+criterion = torch.nn.CrossEntropyLoss()
+num_epochs = 200
+
+for epoch in range(num_epochs):
+    gcn.train()
+    optimizer.zero_grad()
+    
+    # Forward pass
+    output = gcn(X_train)
+    loss = criterion(output, y_train)
+    
+    # Backward and optimize
+    loss.backward()
+    optimizer.step()
+    
+    if (epoch+1) % 10 == 0:
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+# Evaluation
+gcn.eval()
+with torch.no_grad():
+    output = gcn(X_test)
+    _, predicted = torch.max(output.data, 1)
+    accuracy = (predicted == y_test).sum().item() / len(y_test)
+    print(f'Test Accuracy: {accuracy:.4f}')
+```
+
+### Curvature Estimation
+
+Tools to estimate the curvature of data:
+
+```python
+from manify.curvature_estimation import delta_hyperbolicity, sectional_curvature, greedy_method
+
+# Delta hyperbolicity estimation
+dists = pm.pdist(X)  # Pairwise distances
+delta = delta_hyperbolicity.estimate(dists, max_quartets=1000)
+print(f"Estimated delta-hyperbolicity: {delta:.4f}")
+
+# Sectional curvature estimation
+sc_estimate = sectional_curvature.estimate(dists, n_samples=500)
+print(f"Estimated sectional curvature: {sc_estimate:.4f}")
+
+# Greedy signature selection
+# Find the best signature (combination of manifolds) for the data
+best_signature = greedy_method.find_signature(
+    dists, 
+    max_manifolds=3,  # Maximum number of components
+    max_dim=2,  # Maximum dimension per component
+    n_trials=5  # Number of trials
+)
+print(f"Best signature: {best_signature}")
+```
+
+### Visualization
+
+```python
+from manify.utils import visualization
+
+# Visualize embeddings colored by class
+visualization.plot_embeddings(
+    X=embeddings,
+    y=labels,
+    pm=product_manifold,
+    title="Embeddings in Product Space",
+    projection="2d",  # or "3d"
+    alpha=0.7,
+    s=30  # point size
+)
+
+# Visualize decision boundaries for a trained model
+visualization.plot_decision_boundary(
+    model=tree,  # A fitted model (e.g., ProductSpaceDT)
+    X=embeddings,
+    y=labels,
+    pm=product_manifold,
+    title="Decision Boundaries",
+    resolution=100  # Grid resolution
+)
+
+# For manifolds with mixture of components:
+visualization.plot_component_embeddings(
+    X=embeddings,
+    y=labels,
+    pm=product_manifold,
+    title="Component-wise Embeddings"
+)
+```
+
+## Common Usage Patterns
+
+Based on analysis of the benchmark notebooks, here are the common usage patterns:
+
+### 1. Benchmarking Models on Synthetic Data with Known Curvature
+
+A common pattern is to create a product manifold with a specific curvature signature, generate synthetic Gaussian mixture data on that manifold, and evaluate various models:
+
+```python
+import torch
+import manify
+import pandas as pd
+from tqdm.notebook import tqdm
+
+# Define parameters
+CURVATURES = [-2, -1, -0.5, 0, 0.5, 1, 2]  # Different curvatures to test
+DIM = 2  # Dimension of each manifold component
+N_SAMPLES = 10  # Number of trials per curvature
+N_POINTS = 1000  # Data points per dataset
+N_CLASSES = 8  # For classification tasks
+TASK = "classification"  # or "regression"
+SCORE = ["f1-micro", "accuracy"] if TASK == "classification" else ["rmse"]
+
+# Set up hardware acceleration
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+sample_device = torch.device("cpu") if device == torch.device("mps") else device
+
+# Run benchmarks across curvatures
+results = []
+for i, K in enumerate(CURVATURES):
+    for seed in range(N_SAMPLES):
+        seed = seed + N_SAMPLES * i  # Ensure unique seed
+        
+        # Create product manifold with single curvature
+        pm = manify.manifolds.ProductManifold(signature=[(K, DIM)]).to(sample_device)
+        
+        # Generate synthetic data
+        X, y = pm.gaussian_mixture(
+            seed=seed,
+            num_points=N_POINTS,
+            num_classes=N_CLASSES,
+            num_clusters=32,
+            cov_scale_means=1.0/DIM,
+            cov_scale_points=1.0/DIM,
+            task=TASK,
+        )
+        X = X.to(device)
+        y = y.to(device)
+        pm = pm.to(device)
+        
+        # Run benchmarks on various models
+        model_results = manify.utils.benchmarks.benchmark(
+            X, y, pm, task=TASK, score=SCORE, seed=seed, device=device
+        )
+        
+        # Store results
+        model_results["curvature"] = K
+        model_results["seed"] = seed
+        results.append(model_results)
+        
+# Convert to DataFrame for analysis
+results_df = pd.DataFrame(results)
+results_df.to_csv(f"results_{TASK}.tsv", sep="\t", index=False)
+```
+
+### 2. Benchmarking on Mixed-Curvature Product Spaces
+
+Another common pattern tests different manifold signatures (combinations of spaces):
+
+```python
+# Define different manifold signatures to test
+SIGNATURES = [
+    [(-1, 2), (-1, 2)],  # HH: both hyperbolic
+    [(-1, 2), (0, 2)],   # HE: hyperbolic and Euclidean
+    [(-1, 2), (1, 2)],   # HS: hyperbolic and spherical
+    [(1, 2), (1, 2)],    # SS: both spherical
+    [(1, 2), (0, 2)],    # SE: spherical and Euclidean
+    [(-1, 4)],           # H: single hyperbolic
+    [(0, 4)],            # E: single Euclidean
+    [(1, 4)],            # S: single spherical
+]
+SIGNATURES_STR = ["HH", "HE", "HS", "SS", "SE", "H", "E", "S"]
+
+# Similar benchmark code as above, but iterating over signatures
+```
+
+### 3. Link Prediction Workflow
+
+For link prediction on graphs:
+
+```python
+import torch
+import manify
+import networkx as nx
+import pandas as pd
+from tqdm.notebook import tqdm
+from sklearn.model_selection import train_test_split
+
+# Parameters
+DATASETS = ["adjnoun", "dolphins", "polbooks"]
+COMPONENT_SIG = [(-1, 2), (0, 2), (1, 2)]  # Mixed curvature signature
+TEST_SIZE = 0.2
+ITERATIONS = 5000
+
+# Run benchmarks across datasets
+results = []
+for dataset in DATASETS:
+    # Load graph data
+    dists, labels, adj = manify.utils.dataloaders.load(dataset)
+    dists = dists / dists.max()  # Normalize distances
+    
+    # Create product manifold
+    pm = manify.manifolds.ProductManifold(signature=COMPONENT_SIG)
+    
+    # Learn graph embeddings
+    X_embed, losses = manify.embedders.coordinate_learning.train_coords(
+        pm,
+        dists,
+        burn_in_iterations=int(0.1 * ITERATIONS),
+        training_iterations=int(0.9 * ITERATIONS),
+        learning_rate=1e-4,
+    )
+    
+    # Prepare link prediction dataset
+    X, y, pm_new = manify.utils.link_prediction.make_link_prediction_dataset(
+        X_embed, pm, adj, add_dists=True
+    )
+    
+    # Split preserving node pairs
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE)
+    
+    # Run benchmarks
+    res = manify.utils.benchmarks.benchmark(
+        X=None,
+        y=None,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        pm=pm_new,
+        max_depth=3,
+        task="classification",
+    )
+    res["dataset"] = dataset
+    results.append(res)
+
+# Convert to DataFrame
+results_df = pd.DataFrame(results)
+```
+
+### 4. VAE Embedding Benchmarks
+
+For evaluating VAE-generated embeddings:
+
+```python
+import torch
+import manify
+import numpy as np
+import pandas as pd
+from tqdm.notebook import tqdm
+
+# Parameters
+embedding_names = ["blood_cell_scrna", "lymphoma", "cifar_100", "mnist"]
+signatures = [
+    [(1, 2), (0, 2), (-1, 2), (-1, 2), (-1, 2)],  # Mixed signature for blood cells
+    [(1, 2), (1, 2)],                             # Spherical for lymphoma
+    [(1, 2), (1, 2), (1, 2), (1, 2)],             # Spherical for CIFAR
+    [(1, 2), (0, 2), (-1, 2)],                    # Mixed for MNIST
+]
+n_trials = 10
+N_SAMPLES = 1000  # Subsample for faster benchmarking
+
+# Run benchmarks
+results = []
+for embedding, sig in zip(embedding_names, signatures):
+    # Create product manifold with the appropriate signature
+    pm = manify.manifolds.ProductManifold(signature=sig, device="cuda")
+    
+    for trial in range(n_trials):
+        # Load pre-computed VAE embeddings
+        X_train = np.load(f"../data/{embedding}/embeddings/X_train_{trial}.npy")
+        y_train = np.load(f"../data/{embedding}/embeddings/y_train_{trial}.npy")
+        X_test = np.load(f"../data/{embedding}/embeddings/X_test_{trial}.npy")
+        y_test = np.load(f"../data/{embedding}/embeddings/y_test_{trial}.npy")
+        
+        # Subsample for efficiency
+        if len(X_train) > N_SAMPLES:
+            idx = np.random.choice(X_train.shape[0], N_SAMPLES, replace=False)
+            X_train, y_train = X_train[idx], y_train[idx]
+        if len(X_test) > N_SAMPLES:
+            idx = np.random.choice(X_test.shape[0], N_SAMPLES, replace=False)
+            X_test, y_test = X_test[idx], y_test[idx]
+        
+        # Convert to tensors
+        X_train = torch.tensor(X_train, dtype=torch.float32, device="cuda")
+        y_train = torch.tensor(y_train, dtype=torch.long, device="cuda")
+        X_test = torch.tensor(X_test, dtype=torch.float32, device="cuda")
+        y_test = torch.tensor(y_test, dtype=torch.long, device="cuda")
+        
+        # Calculate distances for graph neural networks
+        D_train = pm.pdist2(X_train)
+        max_train_dist = D_train[D_train.isfinite()].max()
+        D_train /= max_train_dist
+        A_train = manify.predictors.kappa_gcn.get_A_hat(torch.exp(-D_train))
+        A_test = manify.predictors.kappa_gcn.get_A_hat(torch.exp(-pm.pdist2(X_test) / max_train_dist))
+        
+        # Run benchmarks
+        res = manify.utils.benchmarks.benchmark(
+            X=None,
+            y=None,
+            X_train=X_train,
+            X_test=X_test,
+            y_train=y_train,
+            y_test=y_test,
+            pm=pm,
+            A_train=A_train,
+            A_test=A_test,
+            device="cuda",
+            task="classification",
+            score=["accuracy", "f1-micro"],
+        )
+        res["embedding"] = embedding
+        res["trial"] = trial
+        results.append(res)
+
+# Analyze results
+results_df = pd.DataFrame(results)
+```
+
+### 5. Visualization of Embeddings and Decision Boundaries
+
+```python
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from manify.manifolds import ProductManifold
+from manify.predictors.decision_tree import ProductSpaceDT
+from manify.utils import visualization
+
+# Create synthetic data
+pm = ProductManifold(signature=[(1, 2)])  # Spherical manifold for easy visualization
+X, y = pm.gaussian_mixture(num_points=500, num_classes=3, seed=42)
+
+# Train a model
+tree = ProductSpaceDT(pm=pm, max_depth=3)
+tree.fit(X, y)
+
+# Basic scatter plot of embeddings
+fig, ax = plt.subplots(figsize=(10, 8))
+scatter = ax.scatter(X[:, 0], X[:, 1], c=y, cmap='viridis', alpha=0.7)
+plt.colorbar(scatter, label='Class')
+plt.title('Embeddings in Spherical Space')
+plt.xlabel('Component 1')
+plt.ylabel('Component 2')
+plt.show()
+
+# Visualize decision boundaries
+visualization.plot_decision_boundary(
+    model=tree,
+    X=X,
+    y=y,
+    pm=pm,
+    title="Decision Boundaries of ProductSpaceDT",
+    resolution=100
+)
+
+# For product spaces with multiple components, visualize each component
+if len(pm.signature) > 1:
+    fig, axes = plt.subplots(1, len(pm.signature), figsize=(15, 5))
+    for i, (k, dim) in enumerate(pm.signature):
+        component_start = sum(d for _, d in pm.signature[:i])
+        component_end = component_start + dim
+        X_component = X[:, component_start:component_end]
+        
+        # Only plot first 2 dimensions of each component
+        axes[i].scatter(X_component[:, 0], X_component[:, 1], c=y, cmap='viridis', alpha=0.7)
+        axes[i].set_title(f'Component {i+1} (κ={k})')
+        axes[i].set_xlabel('Dim 1')
+        axes[i].set_ylabel('Dim 2')
+    
+    plt.tight_layout()
+    plt.show()
+```
+
+### 6. Working with Biological Data (e.g., scRNA-seq)
+
+```python
+import torch
+import numpy as np
+import pandas as pd
+import anndata
+import manify
+from manify.manifolds import ProductManifold
+from manify.embedders import vae
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+# Load scRNA-seq data (anndata format)
+adata = anndata.read_h5ad('data/blood_cell_scrna/adata.h5ad.gz')
+
+# Preprocess data
+X = adata.X.toarray()  # Convert sparse matrix to dense
+y = adata.obs['cell_type'].cat.codes.values  # Convert categorical labels to numeric
+gene_names = adata.var_names.tolist()
+
+# Normalize data
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# Convert to torch tensors
+X_train = torch.tensor(X_train, dtype=torch.float32)
+y_train = torch.tensor(y_train, dtype=torch.long)
+X_test = torch.tensor(X_test, dtype=torch.float32)
+y_test = torch.tensor(y_test, dtype=torch.long)
+
+# Create mixed-curvature product manifold
+# Hyperbolic components for hierarchical cell differentiation patterns
+# Spherical components for cyclic gene expression programs
+# Euclidean components for linear expression patterns
+signature = [(1, 2), (0, 2), (-1, 2)]  # Spherical, Euclidean, Hyperbolic
+pm = ProductManifold(signature=signature)
+
+# Define encoder and decoder specifically for gene expression data
+class GeneExpressionEncoder(torch.nn.Module):
+    def __init__(self, pm, input_dim):
+        super().__init__()
+        self.pm = pm
+        self.input_dim = input_dim
+        
+        # Common layers
+        self.common = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, 512),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.3),
+            torch.nn.Linear(512, 256),
+            torch.nn.BatchNorm1d(256),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.3),
+            torch.nn.Linear(256, 128),
+            torch.nn.BatchNorm1d(128),
+            torch.nn.ReLU(),
+        )
+        
+        # Component-specific heads
+        self.mu_heads = torch.nn.ModuleList([
+            torch.nn.Linear(128, dim) for _, dim in pm.signature
+        ])
+        self.logvar_heads = torch.nn.ModuleList([
+            torch.nn.Linear(128, dim) for _, dim in pm.signature
+        ])
+    
+    def forward(self, x):
+        x = self.common(x)
+        mus = [head(x) for head in self.mu_heads]
+        logvars = [head(x) for head in self.logvar_heads]
+        return mus, logvars
+
+class GeneExpressionDecoder(torch.nn.Module):
+    def __init__(self, pm, output_dim):
+        super().__init__()
+        self.pm = pm
+        self.output_dim = output_dim
+        
+        total_dim = sum(dim for _, dim in pm.signature)
+        
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(total_dim, 128),
+            torch.nn.BatchNorm1d(128),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.3),
+            torch.nn.Linear(128, 256),
+            torch.nn.BatchNorm1d(256),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(0.3),
+            torch.nn.Linear(256, 512),
+            torch.nn.BatchNorm1d(512),
+            torch.nn.ReLU(),
+            torch.nn.Linear(512, output_dim),
+        )
+    
+    def forward(self, z):
+        z_cat = torch.cat(z, dim=1)
+        return self.layers(z_cat)
+
+# Create VAE model
+model = vae.ProductSpaceVAE(
+    pm=pm,
+    encoder=GeneExpressionEncoder(pm, X_train.shape[1]),
+    decoder=GeneExpressionDecoder(pm, X_train.shape[1]),
+    beta=0.5,
+    n_samples=16
+)
+
+# Train model
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+num_epochs = 50
+batch_size = 128
+
+for epoch in range(num_epochs):
+    model.train()
+    train_loss = 0
+    
+    # Create batches
+    indices = torch.randperm(len(X_train))
+    X_train_shuffled = X_train[indices]
+    
+    for i in range(0, len(X_train), batch_size):
+        batch_X = X_train_shuffled[i:i+batch_size]
+        
+        optimizer.zero_grad()
+        recon_batch, kl_div = model(batch_X)
+        loss = model.loss_function(recon_batch, batch_X, kl_div)
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item() * batch_X.size(0)
+    
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {train_loss/len(X_train):.4f}")
+
+# Generate embeddings
+model.eval()
+with torch.no_grad():
+    train_embeddings = model.encode(X_train)
+    test_embeddings = model.encode(X_test)
+
+# Convert embeddings to single tensor for downstream tasks
+train_embeddings_cat = torch.cat([emb for emb in train_embeddings], dim=1)
+test_embeddings_cat = torch.cat([emb for emb in test_embeddings], dim=1)
+
+# Train classifier on embeddings
+tree = manify.predictors.decision_tree.ProductSpaceDT(pm=pm, max_depth=5)
+tree.fit(train_embeddings_cat, y_train)
+
+# Evaluate
+accuracy = tree.score(test_embeddings_cat, y_test)
+print(f"Classification accuracy: {accuracy:.4f}")
+
+# Visualize embeddings (for 2D components)
+# This will show how different cell types cluster in different manifold components
+for i, (k, dim) in enumerate(pm.signature):
+    if dim >= 2:  # Only visualize if dimension is at least 2
+        plt.figure(figsize=(10, 8))
+        plt.scatter(
+            train_embeddings[i][:, 0].numpy(),
+            train_embeddings[i][:, 1].numpy(),
+            c=y_train.numpy(),
+            cmap='tab20',
+            alpha=0.7
+        )
+        plt.title(f"Component {i+1} (κ={k}) Embeddings")
+        plt.colorbar(label="Cell Type")
+        plt.xlabel("Dimension 1")
+        plt.ylabel("Dimension 2")
+        plt.show()
+```
+
+## Best Practices
+
+Based on the benchmark notebooks, here are some best practices when using manify:
+
+1. **Hardware Acceleration**: Always use appropriate hardware acceleration (CUDA, MPS) when available, but be aware that some operations may need to be performed on CPU.
+
+2. **Manifold Construction**: Choose manifold curvatures based on the geometric properties of your data:
+   - Hierarchical data often works best with hyperbolic components (-1 curvature)
+   - Data with cyclic patterns may benefit from spherical components (+1 curvature)
+   - Mixed curvature product spaces can capture complex data geometries
+
+3. **Embedding Dimension**: Start with smaller dimensions (2-4) per manifold component, which are often sufficient and more interpretable.
+
+4. **Distance Normalization**: Always normalize distance matrices when using coordinate_learning:
+   ```python
+   dists = dists / dists.max()
+   ```
+
+5. **Training Hyperparameters**:
+   - For coordinate learning, use burn-in iterations (10-20% of total) with a lower learning rate
+   - Learning rates between 1e-2 and 1e-4 work well for most tasks
+   - For VAEs, use batch normalization and dropout to improve stability
+
+6. **Model Selection**:
+   - ProductSpaceDT and ProductSpaceRF often outperform standard sklearn models
+   - For complex datasets, KappaGCN can capture graph structure in the data
+   - Use `use_special_dims=True` in ProductSpaceDT for better visualization of decision boundaries
+
+7. **Benchmarking**: Use the comprehensive benchmark utility to compare multiple models:
+   ```python
+   results = manify.utils.benchmarks.benchmark(
+       X, y, pm, 
+       task="classification",  # or "regression" 
+       score=["accuracy", "f1-micro"],  # or ["rmse"] for regression
+       device="cuda"
+   )
+   ```
+
+8. **VAE Usage**: When using VAEs, make sure to:
+   - Define encoder/decoder architectures appropriate for your data
+   - Use batch sizes appropriate for your GPU memory
+   - Monitor both reconstruction and KL divergence losses
+   - For biological data, add dropout and batch normalization for better generalization
+
+9. **Link Prediction**: For graph analysis tasks:
+   - Create embeddings using coordinate_learning first
+   - Use the make_link_prediction_dataset utility to prepare features
+   - Split the dataset while preserving the node pair structure
+
+10. **Result Analysis**: Always run multiple trials with different seeds to ensure statistical significance in your results.
+
+11. **Visualization Best Practices**:
+    - For components with dimension > 2, use dimensionality reduction techniques
+    - Use consistent colormaps for easier comparison between visualizations
+    - When visualizing decision boundaries, adjust resolution based on complexity
+
+12. **Curvature Analysis**:
+    - Use multiple estimation methods for more robust results
+    - For large datasets, subsample points to speed up estimation
+    - Interpret curvature estimates cautiously, as they can be sensitive to noise
+
+## Research Background
+
+Manify implements geometric machine learning approaches described in academic papers, particularly focusing on handling data with mixed geometric properties. It's especially suited for data that naturally lives in non-Euclidean spaces, such as:
+
+1. **Hierarchical Data**: Tree-like structures and taxonomies (hyperbolic spaces)
+2. **Networks and Graphs**: Social networks, biological interaction networks
+3. **Biological Data**: Gene expression, protein structures, cell types
+4. **Cyclic Data**: Time series with periodicity, circular statistics (spherical spaces)
+5. **Manifold Learning**: Data that naturally resides on manifolds
+
+The library builds on recent advances in geometric deep learning, information geometry, and computational topology.
+
+For more information, see:
+- Chlenski et al. (2024): https://arxiv.org/abs/2410.13879
+
+## Getting Started
+
+For complete workflows and additional examples, see the example notebooks in the notebooks directory.

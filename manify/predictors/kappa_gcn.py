@@ -67,7 +67,9 @@ class KappaGCNLayer(torch.nn.Module):
     nonlinearity: Function for nonlinear activation.
     """
 
-    def __init__(self, in_features: int, out_features: int, manifold: Manifold, nonlinearity: Callable = torch.relu):
+    def __init__(
+        self, in_features: int, out_features: int, manifold: Manifold, nonlinearity: Optional[Callable] = torch.relu
+    ):
         super().__init__()
 
         # Parameters are Euclidean, straightforardly
@@ -76,7 +78,10 @@ class KappaGCNLayer(torch.nn.Module):
         # self.b = torch.nn.Parameter(torch.rand(out_features))
 
         # Noninearity must be applied via the manifold
-        self.sigma = lambda x: manifold.expmap(nonlinearity(manifold.logmap(x)))
+        if nonlinearity is None:
+            self.sigma = lambda x: x
+        else:
+            self.sigma = lambda x: manifold.expmap(nonlinearity(manifold.logmap(x)))
 
         # Also store manifold
         self.manifold = manifold

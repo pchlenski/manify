@@ -213,7 +213,7 @@ class Manifold:
         else:
             sigma = torch.Tensor(sigma).reshape(-1, self.dim, self.dim).to(self.device)
         assert sigma.shape == (n, self.dim, self.dim)
-        # assert torch.all(sigma == sigma.transpose(-1, -2))
+        assert torch.all(sigma == sigma.transpose(-1, -2))
         assert z_mean.shape[-1] == self.ambient_dim
 
         # Sample initial vector from N(0, sigma)
@@ -492,58 +492,6 @@ class ProductManifold(Manifold):
         self.mu0 = self.mu0.to(device)
         self.projection_matrix = self.projection_matrix.to(device)
         return self
-
-    def initialize_embeddings(
-        self, n_points: int, scales: Optional[List[float]] = None
-    ) -> Float[torch.Tensor, "n_points n_ambient_dim"]:
-        """
-        Randomly initialize n_points embeddings on the product manifold.
-
-        This method generates random embeddings for a specified number of points on
-        the product manifold defined by the initialized manifolds in the object.
-        The initialization is done according to the type of each manifold and is
-        optionally scaled by the provided scales.
-
-        Args:
-            n_points: The number of embeddings to initialize.
-            scales: A list of scale factors corresponding to each manifold in the product.
-            If a single float is provided, it will be applied to all manifolds. Defaults to 1.0.
-
-        Returns:
-            TT["n_points", "n_ambient_dim"]: A tensor of shape (n_points, ambient_dim) representing
-            the initialized embeddings in the ambient space of the product manifold.
-
-        """
-        # Scales management
-        if scales is None:
-            scales = [1.0] * len(self.P)
-        elif len(scales) != len(self.P):
-            raise ValueError("The number of scales must match the number of manifolds.")
-
-        x_embed = []
-        for M, scale in zip(self.P, scales):
-            if M.type == "H":
-                x_embed.append(
-                    M.manifold.expmap0(
-                        u=torch.cat(
-                            [
-                                torch.zeros(n_points, 1, device=self.device),
-                                scale * torch.randn(n_points, M.dim, device=self.device),
-                            ],
-                            dim=1,
-                        )
-                    )
-                )
-            elif M.type == "E":
-                x_embed.append(scale * torch.randn(n_points, M.dim, device=self.device))
-            elif M.type == "S":
-                x_embed.append(M.manifold.random_uniform(n_points, M.ambient_dim).to(self.device))
-            else:
-                raise ValueError(f"Unknown manifold type: {M.type}")
-
-        x_embed = torch.cat(x_embed, axis=1).to(self.device)  # type: ignore
-        # x_embed = geoopt.ManifoldParameter(x_embed, manifold=self.manifold)
-        return x_embed
 
     def factorize(
         self, X: Float[torch.Tensor, "n_points n_dim"], intrinsic: bool = False
