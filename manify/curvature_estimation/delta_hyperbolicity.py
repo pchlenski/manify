@@ -23,8 +23,6 @@ def delta_hyperbolicity_iterative(distance_matrix):
         for x in range(n):
             for y in range(n):
                 for z in range(n):
-                    # Four-point condition: (x,z)_w ≥ min((x,y)_w, (y,z)_w) - δ
-                    # Solving for δ: δ ≥ min((x,y)_w, (y,z)_w) - (x,z)_w
                     current_delta = min(
                         gromov_products[w, x, y], gromov_products[w, y, z]) - gromov_products[w, x, z]
                     delta = max(delta, current_delta)
