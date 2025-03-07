@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 def delta_hyperbolicity_iterative(distance_matrix):
     n = distance_matrix.shape[0]
@@ -148,3 +149,14 @@ def approx_delta_hyperbolicity(dists: torch.Tensor):
 
     # Calculate final result
     return torch.max(maxmin - XY_p)
+
+
+def im_emb_delta(dismat):
+
+    p = 0
+    row = dismat[p, :][np.newaxis, :]
+    col = dismat[:, p][:, np.newaxis]
+    XY_p = 0.5 * (row + col - dismat)
+
+    maxmin = np.max(np.minimum(XY_p[:, :, None], XY_p[None, :, :]), axis=1)
+    return np.max(maxmin - XY_p)
