@@ -5,7 +5,7 @@ import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def delta_hyperbolicity(dists: torch.Tensor, ):
+def delta_hyperbolicity(dists: torch.Tensor):
     """
     computes delta hyperbolicity value from distance matrix for a single value rather than the whole 4-tensor as done in image krukov paper & repo. 
     Switched to using torch rather than numpy
@@ -20,7 +20,10 @@ def delta_hyperbolicity(dists: torch.Tensor, ):
     XY_p_yz = XY_p.unsqueeze(0).expand(n, -1, -1)  # (n,n,n)
     XY_p_xz = XY_p.unsqueeze(1).expand(-1, n, -1)  # (n,n,n)
 
-    return (torch.minimum(XY_p_xy, XY_p_yz) - XY_p_xz).max()
+    out = torch.minimum(XY_p_xy, XY_p_yz)
+
+    out = (out - XY_p_xz)
+    return out.max()
 
 
 def delta_full(dismat):
@@ -39,10 +42,6 @@ def delta_full(dismat):
     # Return the 3-tensor of delta values before taking the max
     minmax = torch.minimum(XY_p_xy, XY_p_yz)
     return minmax - XY_p_xz
-
-
-
-
 
 def batched_delta_hyp(X: torch.Tensor, n_tries=10, batch_size=1500):
     deltas = []
