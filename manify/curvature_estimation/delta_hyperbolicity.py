@@ -1,24 +1,26 @@
 import torch
+import torch.nn as nn
 import numpy as np
+import tqdm
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def delta_hyperbolicity(dists: torch.Tensor):
+def delta_hyperbolicity(dists: torch.Tensor, ):
     """
     computes delta hyperbolicity value from distance matrix for a single value rather than the whole 4-tensor as done in image krukov paper & repo. 
     Switched to using torch rather than numpy
     """
+    n = dists.shape[0]
     p = 0
     row = dists[p, :].unsqueeze(0)  # (1,N)
     col = dists[:, p].unsqueeze(1)  # (N,1)
     XY_p = 0.5 * (row + col - dists)
 
-    XY_p_expanded_1 = XY_p.unsqueeze(2).expand(-1, -1, XY_p.size(0))
-    XY_p_expanded_2 = XY_p.unsqueeze(0).expand(XY_p.size(0), -1, -1)
+    XY_p_xy = XY_p.unsqueeze(2).expand(-1, -1, n)  # (n,n,n)
+    XY_p_yz = XY_p.unsqueeze(0).expand(n, -1, -1)  # (n,n,n)
+    XY_p_xz = XY_p.unsqueeze(1).expand(-1, n, -1)  # (n,n,n)
 
-    minimum_vals = torch.minimum(XY_p_expanded_1, XY_p_expanded_2)
-
-    maxmin = torch.max(minimum_vals, dim=1)[0]
-    return torch.max(maxmin - XY_p)
+    return (torch.minimum(XY_p_xy, XY_p_yz) - XY_p_xz).max()
 
 
 def delta_full(dismat):
@@ -37,3 +39,23 @@ def delta_full(dismat):
     # Return the 3-tensor of delta values before taking the max
     minmax = torch.minimum(XY_p_xy, XY_p_yz)
     return minmax - XY_p_xz
+
+
+
+
+
+def batched_delta_hyp(X: torch.Tensor, n_tries=10, batch_size=1500):
+    deltas = []
+
+    for i in tqdm(range(n_tries)):
+        idx = torch.randperm(len(X), device=device)[:batch_size]
+        X_batch = X[idx]
+        dists = torch.cdist(X_batch, X_batch, p=2)
+        diam = torch.max(dists)
+        delta_rel = 2 * delta_hyperbolicity(dists) / diam
+        deltas.append(delta_rel.item())
+    delta_tensor = torch.tensor(deltas, device=device)
+    return delta_tensor.mean().item(), delta_tensor.std().item()
+
+
+
