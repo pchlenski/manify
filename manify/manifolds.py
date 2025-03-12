@@ -213,7 +213,7 @@ class Manifold:
         else:
             sigma = torch.Tensor(sigma).reshape(-1, self.dim, self.dim).to(self.device)
         assert sigma.shape == (n, self.dim, self.dim)
-        assert torch.all(sigma == sigma.transpose(-1, -2))
+        assert torch.allclose(sigma, sigma.transpose(-1, -2))
         assert z_mean.shape[-1] == self.ambient_dim
 
         # Sample initial vector from N(0, sigma)
