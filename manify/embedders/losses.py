@@ -24,6 +24,9 @@ def distortion_loss(
     Returns:
         float: A float indicating the distortion loss, calculated as the sum of the squared relative
          errors between the estimated and true squared distances.
+        
+    See also: square_loss in HazyResearch hyperbolics repo:
+    https://github.com/HazyResearch/hyperbolics/blob/master/pytorch/hyperbolic_models.py#L178
     """
 
     # Turn into flat vectors of pairwise distances. For pairwise distances, we only consider the upper triangle.
