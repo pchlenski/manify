@@ -24,9 +24,9 @@ def delta_hyperbolicity(dismat: Float[torch.Tensor, "n_points n_points"]) -> Flo
     XY_p_xz = XY_p.unsqueeze(1).expand(-1, n, -1)  # (n,n,n)
 
     out = torch.minimum(XY_p_xy, XY_p_yz)
-
+    
     out = (out - XY_p_xz)
-    return out.max()
+    return out.max().item()
 
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
