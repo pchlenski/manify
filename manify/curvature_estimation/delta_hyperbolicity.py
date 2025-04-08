@@ -1,7 +1,40 @@
 from jaxtyping import Float
 import torch
 
-def delta_hyperbolicity(dismat: Float[torch.Tensor, "n_points n_points"]) -> Float[torch.Tensor, ""]:
+def delta_hyperbolicity(dismat, sample_percent=1, relative=True, device='cpu', full=False):
+    n = int(dismat.shape[0] * sample_percent)
+    p = 0
+
+    indices = torch.randperm(dismat.shape[0])[:n]
+
+    if sample_percent == 1:
+        sampled_dismat = dismat
+    else:
+        sampled_dismat = dismat[indices][:, indices]
+
+    row = sampled_dismat[p, :].unsqueeze(0)  # (1,N)
+    col = sampled_dismat[:, p].unsqueeze(1)  # (N,1)
+    XY_p = 0.5 * (row + col - sampled_dismat)
+
+    XY_p_xy = XY_p.unsqueeze(2).expand(-1, -1, n)  # (n,n,n)
+    XY_p_yz = XY_p.unsqueeze(0).expand(n, -1, -1)  # (n,n,n)
+    XY_p_xz = XY_p.unsqueeze(1).expand(-1, n, -1)  # (n,n,n)
+
+    out = torch.minimum(XY_p_xy, XY_p_yz)
+
+    if not full:
+        delta = (out - XY_p_xz).max().item()
+    else:
+        delta = torch.abs(out - XY_p_xz)
+
+    if relative:
+        diam = torch.max(sampled_dismat).item()
+        return 2 * delta / diam
+    else:
+        return delta
+    
+
+def old_delta_hyperbolicity(dismat: Float[torch.Tensor, "n_points n_points"]) -> Float[torch.Tensor, ""]:
     """
     Compute the delta hyperbolicity of a metric space given its distance matrix.
     
@@ -52,7 +85,7 @@ def delta_full(dismat):
     minmax = torch.minimum(XY_p_xy, XY_p_yz)
     
     deltas = minmax - XY_p_xz
-    return deltas
+    return torch.abs(deltas)
 
 def rel_deltas_full(dismat):
     # We are getting (y,z)_x = .5 (d(x,y) + d(x,z) - d(y,z))
@@ -73,7 +106,7 @@ def rel_deltas_full(dismat):
     deltas = minmax - XY_p_xz
     diam = torch.max(dismat)
     rel_deltas = 2 * deltas / diam
-    return rel_deltas
+    return torch.abs(rel_deltas)
 
 # def batched_delta_hyp(X: torch.Tensor, n_tries=10, batch_size=1500):
 #     deltas = []
