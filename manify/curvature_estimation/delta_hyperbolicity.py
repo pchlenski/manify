@@ -84,6 +84,6 @@ def delta_hyperbolicity(dismat, relative=True, device='cpu', full=True):
         diam = torch.max(dismat).item()
         delta = 2 * delta / diam
     
-    return delta
+    return torch.abs(delta)
 
     
