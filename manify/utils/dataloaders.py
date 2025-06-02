@@ -372,51 +372,35 @@ def load_landmasses(
 def _load_neuron(
     neuron_idx: int,
     n_coefficients: int = 10,
-    threshold: float = 0,
-    n_samples: int = 1000,
-    seed: Optional[int] = None,
     path_to_data: Path = DATA_DIR / "electrophysiology" / "623474383_ephys.nwb",
 ) -> Tuple[Float[torch.Tensor, "nodes n_dims"], Float[torch.Tensor, "nodes,"], None]:
     with h5py.File(path_to_data, "r") as data:
         X = np.array(data[f"acquisition/timeseries/Sweep_{neuron_idx}/data"])
 
-    # FFT
-    X_fft = fft(X)
+    # Training indices = first 80% of points
+    train_idx = int(0.8 * len(X))
+
+    # FFT on the full signal
+    X_fft = fft(X[:train_idx])
     top_k_idx = np.argsort(np.abs(X_fft))[-n_coefficients - 1 : -1]  # Avoid division by zero
 
-    # Get freqs
-    freqs = fftfreq(len(X), d=1.0)
+    # Get freqs (use size of trianing set for correct mapping)
+    freqs = fftfreq(train_idx, d=1.0)
     top_freqs = freqs[top_k_idx]
 
-    # Stratify
-    X_pos_idx = np.arange(X.shape[0])[X > threshold]
-    X_neg_idx = np.arange(X.shape[0])[X <= threshold]
-    n_samples_fixed = min(len(X_pos_idx), len(X_neg_idx), n_samples)
-
-    # Get sample
-    np.random.seed(seed)
+    # For each point in X, compute its position on each "clock"
     data = []
-    labels = []
-    for my_set in [X_pos_idx, X_neg_idx]:
-        for idx in np.random.choice(my_set, size=n_samples_fixed, replace=False):
-            # Get period for X
-            periods = [idx / f for f in top_freqs]
+    for idx in range(len(X)):
+        periods = [idx / f for f in top_freqs]
+        angles = [np.pi * 2 * p for p in periods]
+        xs = [np.cos(theta) for theta in angles]
+        ys = [np.sin(theta) for theta in angles]
+        data.append([[x, y] for x, y in zip(xs, ys)])
+    data = np.stack(data, axis=0).reshape(len(X), 2 * n_coefficients)
 
-            # Convert to angles
-            angles = [np.pi * 2 * p for p in periods]
-
-            # Convert to xs and ys
-            xs = [np.cos(theta) for theta in angles]
-            ys = [np.sin(theta) for theta in angles]
-
-            data.append([[x, y] for x, y in zip(xs, ys)])
-
-            # Also sample a label
-            label = X[idx] > threshold
-            labels.append(label)
-
-    data = np.stack(data, axis=0).reshape(n_samples_fixed * 2, 2 * n_coefficients)
-    labels = np.array(labels)
+    # Get labels: top half versus bottom half
+    threshold = np.percentile(X[:train_idx], 50)
+    labels = (X > threshold).astype(np.float32)
 
     return torch.tensor(data, dtype=torch.float32), torch.tensor(labels), None
 
