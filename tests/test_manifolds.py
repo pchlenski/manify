@@ -65,6 +65,15 @@ def _shared_tests(M, X1, X2, is_euclidean):
     assert (sqdists_11.triu(1) >= 0).all(), "Squared distances for X1 should be non-negative"
     assert (sqdists_12.triu(1) >= 0).all(), "Squared distances for X1 and X2 should be non-negative"
     assert torch.allclose(sqdists_11.triu(1), M.pdist2(X1).triu(1), atol=1e-5), "sqdists_11 and pdist2 diverge for X1"
+    # Equivalence between dist2 and dist squared
+    assert torch.allclose(sqdists_11, dists_11 ** 2, atol=1e-5), "dist2 does not match dist squared for X1"
+    assert torch.allclose(sqdists_12, dists_12 ** 2, atol=1e-5), "dist2 does not match dist squared for X1 and X2"
+    assert torch.allclose(M.pdist2(X1), M.pdist(X1) ** 2, atol=1e-5), "pdist2 does not match pdist squared for X1"
+
+    # the other way around: sqrt(dist2) should match dist
+    assert torch.allclose(sqdists_11.sqrt(), dists_11, atol=1e-5), "sqrt(dist2) does not match dist for X1"
+    assert torch.allclose(sqdists_12.sqrt(), dists_12, atol=1e-5), "sqrt(dist2) does not match dist for X1 and X2"
+    assert torch.allclose(M.pdist2(X1).sqrt(), M.pdist(X1), atol=1e-5), "sqrt(pdist2) does not match pdist for X1"
 
     # Log-likelihood
     lls = M.log_likelihood(X1)
@@ -172,6 +181,21 @@ def test_product_manifold_methods():
                 assert M.type == "S" and isinstance(M.manifold.base, geoopt.Sphere)
 
         _shared_tests(pm, X1, X2, is_euclidean=all(M.curvature == 0 for M in pm.P))
-
+        # dist2 and pdist2 are the sum of component dist2 and pdist2
+        if len(pm.P) > 1:
+            pdist2_total = pm.pdist2(X1)
+            dist2_total = pm.dist2(X1, X2)
+            
+            pdist2_sum = sum(M.pdist2(X1[:, pm.man2dim[M]]) for M in pm.P)
+            dist2_sum = sum(M.dist2(X1[:, pm.man2dim[M]], X2[:, pm.man2dim[M]]) for M in pm.P)
+            
+            assert torch.allclose(pdist2_total, pdist2_sum, atol=1e-5), "pdist2 does not match sum of component pdist2"
+            assert torch.allclose(dist2_total, dist2_sum, atol=1e-5), "dist2 does not match sum of component dist2"
         # Also test gaussian mixture
         X, y = pm.gaussian_mixture(num_points=100, num_classes=2, seed=42, adjust_for_dims=True)
+
+        # Test that dist_component_by_manifold contributions sum to 1
+        from manify.embedders._losses import dist_component_by_manifold # type: ignore
+        if len(pm.P) > 1:  # Requires multiple components
+            contributions = dist_component_by_manifold(pm, X1)
+            assert torch.isclose(torch.tensor(sum(contributions)), torch.tensor(1.0), atol=1e-5), "Contributions do not sum to 1"
