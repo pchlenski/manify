@@ -186,8 +186,16 @@ def test_product_manifold_methods():
             pdist2_total = pm.pdist2(X1)
             dist2_total = pm.dist2(X1, X2)
             
-            pdist2_sum = sum(M.pdist2(X1[:, pm.man2dim[M]]) for M in pm.P)
-            dist2_sum = sum(M.dist2(X1[:, pm.man2dim[M]], X2[:, pm.man2dim[M]]) for M in pm.P)
+            # Compute dimension slices manually
+            slices = []
+            start = 0
+            for M in pm.P:
+                end = start + M.ambient_dim
+                slices.append(slice(start, end))
+                start = end
+                
+            pdist2_sum = sum(M.pdist2(X1[:, slc]) for M, slc in zip(pm.P, slices))
+            dist2_sum = sum(M.dist2(X1[:, slc], X2[:, slc]) for M, slc in zip(pm.P, slices))
             
             assert torch.allclose(pdist2_total, pdist2_sum, atol=1e-5), "pdist2 does not match sum of component pdist2"
             assert torch.allclose(dist2_total, dist2_sum, atol=1e-5), "dist2 does not match sum of component dist2"
