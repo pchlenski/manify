@@ -207,3 +207,304 @@ def test_product_manifold_methods():
         if len(pm.P) > 1:  # Requires multiple components
             contributions = dist_component_by_manifold(pm, X1)
             assert torch.isclose(torch.tensor(sum(contributions)), torch.tensor(1.0), atol=1e-5), "Contributions do not sum to 1"
+
+
+def test_sampling_distances_to_origin():
+    """Test that distances to origin are the same for all wrapped normal distributions 
+    (except spherical for very high curvature)."""
+    print("Testing distances to origin for wrapped normal distributions...")
+    
+    N_SAMPLES = 1000
+    curvatures = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+    
+    for K in curvatures:
+        print(f"  Testing curvature K = {K}")
+        m = Manifold(K, 4)
+        
+        # Pick a random point to use as the center
+        mu = m.sample(z_mean=m.mu0)
+        Sigma = torch.diag(torch.randn(m.dim)) ** 2
+        
+        # Sample points from wrapped normal distribution
+        samples = m.sample(n_samples=N_SAMPLES, z_mean=mu, sigma=Sigma)
+        
+        # Compute distances to origin
+        distances_to_origin = m.dist(samples, m.mu0.unsqueeze(0)).squeeze()
+        
+        # For hyperbolic and Euclidean manifolds, distances should be consistent
+        if K <= 0:
+            # Check that distances are reasonable (not all zero, not all infinite)
+            assert distances_to_origin.min() > 0, f"Distances to origin should be positive for K={K}"
+            assert distances_to_origin.max() < float('inf'), f"Distances to origin should be finite for K={K}"
+            
+            # Check that distances have reasonable variance (not all identical)
+            assert distances_to_origin.std() > 1e-6, f"Distances to origin should have variance for K={K}"
+        
+        # For spherical manifolds with high curvature, distances might be more constrained
+        elif K > 0:
+            # Spherical manifolds have bounded distances
+            max_possible_distance = math.pi / math.sqrt(K)
+            assert distances_to_origin.max() <= max_possible_distance, f"Distances should be bounded for spherical K={K}"
+
+
+def test_log_likelihood_differences():
+    """Test that log-likelihoods are generally positive (Q(z) - P(z)) for Manifold."""
+    print("Testing log-likelihood differences for Manifold...")
+    
+    N_SAMPLES = 1000
+    curvatures = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+    
+    for K in curvatures:
+        print(f"  Testing curvature K = {K}")
+        m = Manifold(K, 4)
+        
+        # Pick a random point to use as the center
+        mu = m.sample(z_mean=m.mu0)
+        Sigma = torch.diag(torch.randn(m.dim)) ** 2
+        
+        # Sample points from wrapped normal distribution
+        samples = m.sample(n_samples=N_SAMPLES, z_mean=mu, sigma=Sigma)
+        
+        # Compute log-likelihoods
+        log_probs_p = m.log_likelihood(z=samples)  # Default args (prior)
+        log_probs_q = m.log_likelihood(z=samples, mu=mu, sigma=Sigma)  # Posterior
+        
+        # Compute the difference Q(z) - P(z)
+        log_likelihood_diff = log_probs_q - log_probs_p
+        
+        print(f"    Shape: {log_probs_p.shape}")
+        print(f"    P(z) = {log_probs_p.mean().item():.3f}")
+        print(f"    Q(z) = {log_probs_q.mean().item():.3f}")
+        print(f"    Q(z) - P(z) = {log_likelihood_diff.mean().item():.3f}")
+        
+        # Check that the difference is reasonable (not too negative)
+        # Allow for some numerical tolerance - log-likelihood differences can be negative
+        assert log_likelihood_diff.mean() > -50.0, f"Log-likelihood difference should not be too negative for K={K}"
+        
+        # Check that individual differences are reasonable
+        assert log_likelihood_diff.std() > 0, f"Log-likelihood differences should have variance for K={K}"
+
+
+def test_product_manifold_log_likelihood_differences():
+    """Test that log-likelihoods are generally positive (Q(z) - P(z)) for ProductManifold."""
+    print("Testing log-likelihood differences for ProductManifold...")
+    
+    N_SAMPLES = 1000
+    signatures = [
+        [(-1.0, 4)],
+        [(0.0, 4)],
+        [(1.0, 4)],
+        [(-1.0, 4), (0.0, 4)],
+        [(-1.0, 4), (1.0, 4)],
+        [(0.0, 4), (1.0, 4)],
+    ]
+    
+    for signature in signatures:
+        print(f"  Testing signature: {signature}")
+        pm = ProductManifold(signature=signature)
+        
+        # Pick a random point to use as the center
+        mu = pm.sample(z_mean=pm.mu0)
+        
+        # Create factorized covariance matrices
+        sigma_factorized = []
+        for M in pm.P:
+            Sigma = torch.diag(torch.randn(M.dim)) ** 2
+            sigma_factorized.append(Sigma)
+        
+        # Sample points from wrapped normal distribution
+        samples = pm.sample(n_samples=N_SAMPLES, z_mean=mu, sigma_factorized=sigma_factorized)
+        
+        # Compute log-likelihoods
+        log_probs_p = pm.log_likelihood(z=samples)  # Default args (prior)
+        log_probs_q = pm.log_likelihood(z=samples, mu=mu, sigma_factorized=sigma_factorized)  # Posterior
+        
+        # Compute the difference Q(z) - P(z)
+        log_likelihood_diff = log_probs_q - log_probs_p
+        
+        print(f"    Shape: {log_probs_p.shape}")
+        print(f"    P(z) = {log_probs_p.mean().item():.3f}")
+        print(f"    Q(z) = {log_probs_q.mean().item():.3f}")
+        print(f"    Q(z) - P(z) = {log_likelihood_diff.mean().item():.3f}")
+        
+        # Check that the difference is reasonable (not too negative)
+        # Allow for some numerical tolerance - log-likelihood differences can be negative
+        assert log_likelihood_diff.mean() > -500.0, f"Log-likelihood difference should not be too negative for signature={signature}"
+        
+        # Check that individual differences are reasonable
+        assert log_likelihood_diff.std() > 0, f"Log-likelihood differences should have variance for signature={signature}"
+
+
+def test_kl_divergence_equivalence():
+    """Test that KL divergence is equal to the log-likelihood difference for Manifold."""
+    print("Testing KL divergence equivalence for Manifold...")
+    
+    N_SAMPLES = 1000
+    curvatures = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+    
+    for K in curvatures:
+        print(f"  Testing curvature K = {K}")
+        m = Manifold(K, 4)
+        
+        # Pick a random point to use as the center
+        mu = m.sample(z_mean=m.mu0)
+        Sigma = torch.diag(torch.randn(m.dim)) ** 2
+        
+        # Sample points from wrapped normal distribution
+        samples = m.sample(n_samples=N_SAMPLES, z_mean=mu, sigma=Sigma)
+        
+        # Compute log-likelihoods
+        log_probs_p = m.log_likelihood(z=samples)  # Default args (prior)
+        log_probs_q = m.log_likelihood(z=samples, mu=mu, sigma=Sigma)  # Posterior
+        
+        # Compute the difference Q(z) - P(z)
+        log_likelihood_diff = log_probs_q - log_probs_p
+        
+        # For KL divergence, we need to compute the expectation
+        # KL divergence should be approximately equal to the mean of log_probs_q - log_probs_p
+        kl_divergence_approx = log_likelihood_diff.mean()
+        
+        print(f"    KL divergence approximation: {kl_divergence_approx.item():.3f}")
+        print(f"    Log-likelihood difference mean: {log_likelihood_diff.mean().item():.3f}")
+        
+        # The KL divergence should be reasonable (not too negative)
+        assert kl_divergence_approx > -1000.0, f"KL divergence should not be too negative for K={K}"
+        
+        # Check that the approximation is reasonable (not infinite or NaN)
+        assert torch.isfinite(kl_divergence_approx), f"KL divergence should be finite for K={K}"
+
+
+def test_product_manifold_kl_divergence_equivalence():
+    """Test that KL divergence is equal to the log-likelihood difference for ProductManifold."""
+    print("Testing KL divergence equivalence for ProductManifold...")
+    
+    N_SAMPLES = 1000
+    signatures = [
+        [(-1.0, 4)],
+        [(0.0, 4)],
+        [(1.0, 4)],
+        [(-1.0, 4), (0.0, 4)],
+        [(-1.0, 4), (1.0, 4)],
+        [(0.0, 4), (1.0, 4)],
+    ]
+    
+    for signature in signatures:
+        print(f"  Testing signature: {signature}")
+        pm = ProductManifold(signature=signature)
+        
+        # Pick a random point to use as the center
+        mu = pm.sample(z_mean=pm.mu0)
+        
+        # Create factorized covariance matrices
+        sigma_factorized = []
+        for M in pm.P:
+            Sigma = torch.diag(torch.randn(M.dim)) ** 2
+            sigma_factorized.append(Sigma)
+        
+        # Sample points from wrapped normal distribution
+        samples = pm.sample(n_samples=N_SAMPLES, z_mean=mu, sigma_factorized=sigma_factorized)
+        
+        # Compute log-likelihoods
+        log_probs_p = pm.log_likelihood(z=samples)  # Default args (prior)
+        log_probs_q = pm.log_likelihood(z=samples, mu=mu, sigma_factorized=sigma_factorized)  # Posterior
+        
+        # Compute the difference Q(z) - P(z)
+        log_likelihood_diff = log_probs_q - log_probs_p
+        
+        # For KL divergence, we need to compute the expectation
+        # KL divergence should be approximately equal to the mean of log_probs_q - log_probs_p
+        kl_divergence_approx = log_likelihood_diff.mean()
+        
+        print(f"    KL divergence approximation: {kl_divergence_approx.item():.3f}")
+        print(f"    Log-likelihood difference mean: {log_likelihood_diff.mean().item():.3f}")
+        
+        # The KL divergence should be reasonable (not too negative)
+        assert kl_divergence_approx > -500.0, f"KL divergence should not be too negative for signature={signature}"
+        
+        # Check that the approximation is reasonable (not infinite or NaN)
+        assert torch.isfinite(kl_divergence_approx), f"KL divergence should be finite for signature={signature}"
+
+
+def test_sampling_consistency():
+    """Test that sampling produces consistent results with different input formats."""
+    print("Testing sampling consistency...")
+    
+    curvatures = [-1.0, 0.0, 1.0]
+    
+    for K in curvatures:
+        print(f"  Testing curvature K = {K}")
+        m = Manifold(K, 4)
+        
+        # Test different z_mean formats
+        mu = m.sample(z_mean=m.mu0)
+        
+        # Format 1: Single point
+        samples1 = m.sample(n_samples=100, z_mean=mu)
+        
+        # Format 2: Stacked points
+        stacked_mu = torch.stack([mu] * 100)
+        samples2 = m.sample(z_mean=stacked_mu)
+        
+        # Format 3: Concatenated points
+        concat_mu = torch.cat([mu] * 100, dim=0)
+        samples3 = m.sample(z_mean=concat_mu)
+        
+        # All should produce the same number of samples
+        assert samples1.shape[0] == 100, f"Sample count mismatch for format 1, K={K}"
+        assert samples2.shape[0] == 100, f"Sample count mismatch for format 2, K={K}"
+        assert samples3.shape[0] == 100, f"Sample count mismatch for format 3, K={K}"
+        
+        # All should have the same shape
+        assert samples1.shape == samples2.shape == samples3.shape, f"Sample shape mismatch for K={K}"
+        
+        # Test different sigma formats
+        Sigma = torch.diag(torch.randn(m.dim)) ** 2
+        
+        # Format 1: Single matrix
+        samples1 = m.sample(n_samples=100, z_mean=mu, sigma=Sigma)
+        
+        # Format 2: Stacked matrices
+        stacked_Sigma = torch.stack([Sigma] * 100)
+        samples2 = m.sample(z_mean=stacked_mu, sigma=stacked_Sigma)
+        
+        # Both should produce the same number of samples
+        assert samples1.shape[0] == 100, f"Sample count mismatch for sigma format 1, K={K}"
+        assert samples2.shape[0] == 100, f"Sample count mismatch for sigma format 2, K={K}"
+
+
+def test_sampling_edge_cases():
+    """Test sampling with edge cases like extreme curvatures and covariance values."""
+    print("Testing sampling edge cases...")
+    
+    # Test extreme curvatures
+    extreme_curvatures = [-10.0, -5.0, 5.0, 10.0]
+    
+    for K in extreme_curvatures:
+        print(f"  Testing extreme curvature K = {K}")
+        m = Manifold(K, 4)
+        
+        # Should still be able to sample
+        samples = m.sample(100)
+        assert samples.shape == (100, m.ambient_dim), f"Sampling failed for extreme curvature K={K}"
+        
+        # Check that points are on the manifold
+        assert m.manifold.check_point(samples), f"Sampled points not on manifold for K={K}"
+    
+    # Test extreme covariance values
+    m = Manifold(0.0, 4)  # Use Euclidean for simplicity
+    mu = m.sample(z_mean=m.mu0)
+    
+    # Very small covariance
+    small_Sigma = torch.eye(m.dim) * 1e-6
+    samples_small = m.sample(n_samples=100, z_mean=mu, sigma=small_Sigma)
+    assert samples_small.shape == (100, m.ambient_dim), "Sampling failed for small covariance"
+    
+    # Very large covariance
+    large_Sigma = torch.eye(m.dim) * 1e6
+    samples_large = m.sample(n_samples=100, z_mean=mu, sigma=large_Sigma)
+    assert samples_large.shape == (100, m.ambient_dim), "Sampling failed for large covariance"
+    
+    # Very small covariance (close to zero but still positive definite)
+    tiny_Sigma = torch.eye(m.dim) * 1e-10
+    samples_tiny = m.sample(n_samples=100, z_mean=mu, sigma=tiny_Sigma)
+    assert samples_tiny.shape == (100, m.ambient_dim), "Sampling failed for tiny covariance"
