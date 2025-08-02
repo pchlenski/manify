@@ -66,6 +66,7 @@ nav:
       - Link Prediction: reference/utils/link_prediction.md
       - Preprocessing: reference/utils/preprocessing.md
       - Visualization: reference/utils/visualization.md
+  - Contributing: contributing.md
 
 markdown_extensions:
   - admonition
