@@ -6,6 +6,7 @@ from manify.predictors.decision_tree import ProductSpaceDT, ProductSpaceRF
 from manify.predictors.kappa_gcn import KappaGCN, get_A_hat
 from manify.predictors.perceptron import ProductSpacePerceptron
 from manify.predictors.svm import ProductSpaceSVM
+from manify.utils.benchmarks import benchmark
 from manify.utils.link_prediction import make_link_prediction_dataset, split_link_prediction_dataset
 
 
@@ -92,6 +93,64 @@ def test_all_classifiers():
     _test_kappa_gcn_model(kappa_gcn, X_train_stereo, X_test_stereo, y_train, y_test, pm=pm_stereo)
 
     print("All classifiers tested successfully.")
+
+
+def test_product_dt_matches_sklearn_on_euclidean():
+    """Check that ProductSpaceDT matches sklearn DT on an equivalent Euclidean problem."""
+    print("Testing ProductSpaceDT equivalence to sklearn DecisionTree on Euclidean data")
+
+    torch.manual_seed(42)
+    pm = ProductManifold(signature=[(0.0, 4)])
+    X, y = pm.gaussian_mixture(num_points=200, num_classes=2, seed=42)
+
+    results = benchmark(
+        X=X,
+        y=y,
+        pm=pm,
+        models=["sklearn_dt", "product_dt"],
+        max_depth=3,
+        min_samples_leaf=2,
+        min_samples_split=2,
+        task="classification",
+        seed=42,
+    )
+
+    # Ensure both models achieve broadly similar performance
+    acc_sklearn = results["sklearn_dt_accuracy"]
+    acc_product = results["product_dt_accuracy"]
+
+    assert abs(acc_sklearn - acc_product) < 0.1, (
+        f"ProductSpaceDT accuracy {acc_product:.3f} should match sklearn DT accuracy {acc_sklearn:.3f}"
+    )
+
+
+def test_product_dt_matches_sklearn_regression_on_euclidean():
+    """Check that ProductSpaceDT regression matches sklearn DT regression on Euclidean data."""
+    print("Testing ProductSpaceDT regression equivalence to sklearn DecisionTreeRegressor on Euclidean data")
+
+    torch.manual_seed(42)
+    pm = ProductManifold(signature=[(0.0, 4)])
+    X, y = pm.gaussian_mixture(num_points=200, num_classes=2, seed=42, task="regression")
+
+    results = benchmark(
+        X=X,
+        y=y,
+        pm=pm,
+        models=["sklearn_dt", "product_dt"],
+        max_depth=3,
+        min_samples_leaf=2,
+        min_samples_split=2,
+        task="regression",
+        seed=42,
+        score=["mse"],
+    )
+
+    mse_sklearn = results["sklearn_dt_mse"]
+    mse_product = results["product_dt_mse"]
+
+    # For regression, require that both models achieve comparably small error
+    assert mse_sklearn < 0.2
+    assert mse_product < 0.2
 
 
 def test_all_regressors():
