@@ -31,7 +31,11 @@ class KappaGCNLayer(torch.nn.Module):
     """
 
     def __init__(
-        self, in_features: int, out_features: int, manifold: Manifold, nonlinearity: Callable | None = torch.relu
+        self,
+        in_features: int,
+        out_features: int,
+        manifold: Manifold,
+        nonlinearity: Callable | None = torch.relu,
     ):
         super().__init__()
 
@@ -45,7 +49,10 @@ class KappaGCNLayer(torch.nn.Module):
         self.manifold = manifold
 
     def _left_multiply(
-        self, A: Float[torch.Tensor, "n_nodes n_nodes"], X: Float[torch.Tensor, "n_nodes dim"], M: Manifold
+        self,
+        A: Float[torch.Tensor, "n_nodes n_nodes"],
+        X: Float[torch.Tensor, "n_nodes dim"],
+        M: Manifold,
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         r"""$\kappa$-left matrix multiply two matrices $\mathbf{A}$ and $\mathbf{X}$.
 
@@ -71,7 +78,9 @@ class KappaGCNLayer(torch.nn.Module):
         )
 
     def forward(
-        self, X: Float[torch.Tensor, "n_nodes dim"], A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
+        self,
+        X: Float[torch.Tensor, "n_nodes dim"],
+        A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         """Forward pass for the Kappa GCN layer.
 
@@ -116,7 +125,9 @@ class KappaSequential(nn.Module):
         self.layers = nn.ModuleList(layers)
 
     def forward(
-        self, X: Float[torch.Tensor, "n_nodes dim"], A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
+        self,
+        X: Float[torch.Tensor, "n_nodes dim"],
+        A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     ) -> Float[torch.Tensor, "n_nodes out_dim"]:
         """Forward pass through all layers.
 
@@ -167,7 +178,12 @@ class StereographicLogits(nn.Module):
         apply_softmax: Whether to apply softmax to the output logits (default: False)
     """
 
-    def __init__(self, out_features: int, manifold: Manifold | ProductManifold, apply_softmax: bool = False):
+    def __init__(
+        self,
+        out_features: int,
+        manifold: Manifold | ProductManifold,
+        apply_softmax: bool = False,
+    ):
         super().__init__()
 
         self.out_features = out_features
@@ -188,7 +204,10 @@ class StereographicLogits(nn.Module):
         M: Manifold,
         return_inner_products: bool = False,
     ) -> (
-        tuple[Float[torch.Tensor, "n_nodes n_classes"], Float[torch.Tensor, "n_nodes n_classes"]]
+        tuple[
+            Float[torch.Tensor, "n_nodes n_classes"],
+            Float[torch.Tensor, "n_nodes n_classes"],
+        ]
         | Float[torch.Tensor, "n_nodes n_classes"]
     ):
         """Compute logits for a single manifold."""
@@ -340,147 +359,197 @@ class FermiDiracDecoder(nn.Module):
         return logits
 
 
+def _tangent_module(manifold: Manifold | ProductManifold, module: nn.Module) -> nn.Module:
+    """Wrap a Euclidean ``nn.Module`` so it operates in the tangent space at the origin.
+
+    The returned module maps inputs to the tangent space at ``mu0`` via ``logmap0``, applies the
+    wrapped Euclidean module, and maps the result back to the manifold via ``expmap0``. This is the
+    module-level analogue of ``manifold.apply`` (which only wraps plain callables) and keeps the
+    wrapped parameters registered for ``nn.Module`` bookkeeping. For a curvature-zero (Euclidean)
+    stereographic manifold ``logmap0``/``expmap0`` are the identity, so the wrapper reduces exactly to
+    the underlying Euclidean module.
+    """
+    return _TangentModule(manifold, module)
+
+
+class _TangentModule(nn.Module):
+    """Module wrapper implementing ``expmap0(module(logmap0(x)))`` (see :func:`_tangent_module`)."""
+
+    def __init__(self, manifold: Manifold | ProductManifold, module: nn.Module):
+        super().__init__()
+        self.manifold = manifold
+        self.module = module
+
+    def forward(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
+        """Apply the wrapped Euclidean module in the tangent space at the origin."""
+        H = self.manifold.manifold.logmap0(X)
+        H = self.module(H)
+        return self.manifold.manifold.expmap0(H)
+
+
 class StereographicLayerNorm(nn.Module):
     """Stereographic Layer Normalization.
 
+    Layer normalization is undefined directly on a curved manifold, so we apply an ordinary Euclidean
+    ``nn.LayerNorm`` in the tangent space at the origin (``logmap0`` -> ``LayerNorm`` -> ``expmap0``).
+    For a stereographic ``ProductManifold`` the tangent space at the origin is Euclidean of dimension
+    ``manifold.dim`` and ``logmap0``/``expmap0`` handle the per-component curvatures, so no explicit
+    curvature broadcasting is required. The output is re-projected onto the manifold for numerical
+    safety. In the curvature-zero limit this reduces to a plain ``LayerNorm``.
+
     Args:
-        manifold: Manifold or ProductManifold object defining the geometry.
-        embedding_dim: Embedding dimension of the input points.
-        curvatures: Tensor of shape [num_heads, 1, 1] representing the curvature
-                    value used per head in geometric computations.
+        manifold: Manifold or ProductManifold object defining the geometry. Must be stereographic.
+        embedding_dim: Embedding dimension of the input points (``manifold.dim``).
 
     Attributes:
         manifold: The manifold object for geometric operations.
-        stereographic_norm: Stereographic layernorm used in the tangent space.
-        curvatures: Tensor of shape [num_heads, 1, 1] representing the curvature
-                    value used per head in geometric computations.
+        norm: Tangent-space layer-norm wrapper.
+    """
+
+    def __init__(self, manifold: Manifold | ProductManifold, embedding_dim: int):
+        super().__init__()
+
+        self.manifold = manifold
+        self.norm = _tangent_module(manifold, nn.LayerNorm(embedding_dim))
+
+    def forward(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
+        """Apply layer normalization on the stereographic manifold."""
+        return self.manifold.manifold.projx(self.norm(X))
+
+
+class GeometricLinearizedAttention(nn.Module):
+    r"""Linear (kernelized) multi-head attention in the tangent space of a stereographic manifold.
+
+    The semantics deliberately follow the rest of ``manify``: a *single graph* of ``n_nodes`` tokens
+    with shape ``[n_nodes, dim]`` (no batch dimension), exactly like :class:`KappaGCNLayer`. The
+    ``mask`` plays the role of the (normalized) adjacency matrix ``A_hat`` -- an all-ones mask gives
+    full self-attention, a sparse mask restricts which tokens may attend to which.
+
+    Attention itself is computed in the tangent space at the origin, where the geometry is Euclidean
+    and standard linear attention with the ``elu(x) + 1`` feature map is well defined. The caller is
+    responsible for mapping points on/off the manifold (this module receives and returns *tangent*
+    vectors). Working in the tangent space sidesteps the ill-posed problem of slicing a product
+    manifold's coordinates across heads and yields an exact Euclidean limit as curvature -> 0.
+
+    Linear attention computes, per query ``i``:
+
+    $$ \mathrm{out}_i = \frac{\sum_j m_{ij}\, \phi(q_i)^\top \phi(k_j)\, v_j}
+                              {\sum_j m_{ij}\, \phi(q_i)^\top \phi(k_j)}, \qquad \phi(x) = elu(x) + 1 $$
+
+    which is evaluated in the kernel-factorized (linear-time) form.
+
+    Args:
+        num_heads: Number of attention heads.
+        head_dim: Dimension of each attention head.
+
+    Attributes:
+        num_heads: Number of attention heads.
+        head_dim: Dimension of each attention head.
+    """
+
+    def __init__(self, num_heads: int, head_dim: int):
+        super().__init__()
+
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self._epsilon = 1e-6
+
+    def forward(
+        self,
+        Q: Float[torch.Tensor, "num_heads n_nodes head_dim"],
+        K: Float[torch.Tensor, "num_heads n_nodes head_dim"],
+        V: Float[torch.Tensor, "num_heads n_nodes head_dim"],
+        mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+    ) -> Float[torch.Tensor, "num_heads n_nodes head_dim"]:
+        """Forward pass for tangent-space linear attention.
+
+        Args:
+            Q: Query tensor, shape ``[num_heads, n_nodes, head_dim]``.
+            K: Key tensor, shape ``[num_heads, n_nodes, head_dim]``.
+            V: Value tensor, shape ``[num_heads, n_nodes, head_dim]``.
+            mask: Optional adjacency/attention mask, shape ``[n_nodes, n_nodes]``. Entry ``(i, j)``
+                weights how much query ``i`` attends to key/value ``j``. ``None`` means full attention.
+
+        Returns:
+            Output tensor, shape ``[num_heads, n_nodes, head_dim]``.
+        """
+        # Feature map phi(x) = elu(x) + 1 > 0, so attention weights are non-negative.
+        Qf = nn.functional.elu(Q) + 1.0  # [H, N, d]
+        Kf = nn.functional.elu(K) + 1.0  # [H, N, d]
+
+        if mask is None:
+            # Linear-time form: aggregate over keys first, O(N d^2) instead of O(N^2 d).
+            kv = torch.einsum("hnd,hne->hde", Kf, V)  # [H, d, d]
+            numerator = torch.einsum("hnd,hde->hne", Qf, kv)  # [H, N, d]
+            k_sum = Kf.sum(dim=1)  # [H, d]
+            denominator = torch.einsum("hnd,hd->hn", Qf, k_sum)  # [H, N]
+        else:
+            # Masked form: explicit (masked) attention scores. O(N^2 d) but supports adjacency.
+            scores = torch.einsum("hnd,hmd->hnm", Qf, Kf)  # [H, N, N]
+            scores = scores * mask[None]  # broadcast mask over heads
+            numerator = torch.einsum("hnm,hme->hne", scores, V)  # [H, N, d]
+            denominator = scores.sum(dim=-1)  # [H, N]
+
+        denominator = denominator.clamp_min(self._epsilon).unsqueeze(-1)  # [H, N, 1]
+        return numerator / denominator
+
+
+class StereographicAttention(nn.Module):
+    """Stereographic multi-head attention layer for a single graph of ``[n_nodes, dim]`` tokens.
+
+    Inputs and outputs are points on a stereographic (product) manifold. Queries, keys and values are
+    produced by Mobius matrix-vector products (queries/keys) and a :class:`KappaGCNLayer` (values),
+    then attention is performed in the tangent space at the origin by
+    :class:`GeometricLinearizedAttention`, and the result is mapped back onto the manifold by a
+    :class:`KappaGCNLayer` output projection. The ``mask`` is the adjacency matrix ``A_hat`` (or
+    ``None`` for full attention).
+
+    Args:
+        manifold: Stereographic Manifold or ProductManifold defining the geometry.
+        num_heads: Number of attention heads.
+        dim: Embedding dimension of the input/output points (``manifold.dim``).
+        head_dim: Dimension of each attention head.
+
+    Attributes:
+        manifold: The manifold object for geometric operations.
+        num_heads: Number of attention heads.
+        head_dim: Dimensionality of each attention head.
+        W_q: Euclidean (tangent-space) linear projection to query vectors.
+        W_k: Euclidean (tangent-space) linear projection to key vectors.
+        W_v: Euclidean (tangent-space) linear projection to value vectors.
+        attn: Tangent-space linear attention module.
+        W_o: Euclidean (tangent-space) linear output projection.
+
+    Note:
+        Queries/keys/values are computed by ordinary Euclidean linear maps *in the tangent space at
+        the origin* rather than by Mobius matrix-vector products. This is deliberate: on a product
+        stereographic manifold, ``mobius_matvec`` is applied per component and therefore cannot change
+        the per-component dimensionality, so it could not realize an arbitrary ``num_heads * head_dim``
+        projection. Operating in the tangent space (where the geometry is Euclidean) removes that
+        restriction while remaining curvature-correct via ``logmap0``/``expmap0``.
     """
 
     def __init__(
-        self, manifold: Manifold | ProductManifold, embedding_dim: int, curvatures: Float[torch.Tensor, "num_heads 1 1"]
+        self,
+        manifold: Manifold | ProductManifold,
+        num_heads: int,
+        dim: int,
+        head_dim: int,
     ):
         super().__init__()
 
         self.manifold = manifold
-        self.stereographic_norm = self.manifold.apply(nn.LayerNorm(embedding_dim))
-        self.curvatures = curvatures
-
-    def forward(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
-        """Apply layer normalization on the stereographic manifold."""
-        norm_X = self.stereographic_norm(X)
-        output = geoopt.manifolds.stereographic.math.project(norm_X, self.curvatures)
-        return output
-
-
-class GeometricLinearizedAttention(nn.Module):
-    """Geometric Linearized Attention.
-
-    Args:
-        curvatures: Tensor of shape [num_heads, 1, 1] representing the curvature
-                    value used per head in geometric computations.
-        num_heads: Number of attention heads.
-        head_dim: Dimension of each attention head.
-
-    Attributes:
-        num_heads: Number of attention heads.
-        head_dim: Dimension of each attention head.
-        epsilon: Small epsilon for masking inverse denominator (constant).
-        clamp_epsilon: Minimum clamp value for numerical stability in gamma denominator (constant).
-    """
-
-    def __init__(self, curvatures: float | list[float], num_heads: int, head_dim: int):
-        super().__init__()
-
-        self.num_heads = num_heads
-        self.curvatures = curvatures
-
-        self.head_dim = head_dim
-        self._epsilon = 1e-5
-        self._clamp_epsilon = 1e-10
-
-    def forward(
-        self,
-        Q: Float[torch.Tensor, "batch_size num_heads n_nodes head_dim"],
-        K: Float[torch.Tensor, "batch_size num_heads n_nodes head_dim"],
-        V: Float[torch.Tensor, "batch_size num_heads n_nodes head_dim"],
-        mask: Float[torch.Tensor, "1 1 n_nodes n_nodes"],
-    ) -> Float[torch.Tensor, "batch_size n_nodes dim"]:
-        """Forward pass for the geometric linearized attention layer.
-
-        Args:
-            Q: Query tensor.
-            K: Key tensor.
-            V: Value tensor.
-            mask: Mask tensor for attention.
-
-        Returns:
-            Output tensor after applying attention.
-        """
-        v1 = geoopt.manifolds.stereographic.math.parallel_transport0back(V, Q, k=self.curvatures)
-        v2 = geoopt.manifolds.stereographic.math.parallel_transport0back(V, K, k=self.curvatures)
-
-        gamma = geoopt.manifolds.stereographic.math.lambda_x(x=V, k=self.curvatures, keepdim=True, dim=-1)
-        denominator = geoopt.utils.clamp_abs((gamma - 1), self._clamp_epsilon)
-
-        x = ((gamma / denominator) * V) * mask[None, :, None]
-
-        v1 = nn.functional.elu(v1) + 1
-        v2 = (denominator * (nn.functional.elu(v2) + 1)) * mask[None, :, None]
-
-        # Linearized approximation
-        v2_cumsum = v2.sum(dim=-2)  # [B, H, D]
-        D = torch.einsum("...nd,...d->...n", v1, v2_cumsum.type_as(v1))  # normalization terms
-        D_inv = 1.0 / D.masked_fill_(D == 0, self._epsilon)
-        context = torch.einsum("...nd,...ne->...de", v2, x)
-        X = torch.einsum("...de,...nd,...n->...ne", context, v1, D_inv)
-
-        X = geoopt.manifolds.stereographic.math.project(X, k=self.curvatures)
-        X = geoopt.manifolds.stereographic.math.mobius_scalar_mul(
-            torch.tensor(0.5, dtype=X.dtype, device=X.device), X, k=self.curvatures, dim=-1
-        )
-        X = geoopt.manifolds.stereographic.math.project(X, k=self.curvatures)
-
-        return X
-
-
-class StereographicAttention(nn.Module):
-    """Stereographic Attention Layer.
-
-    Args:
-        manifold: Manifold or ProductManifold object defining the geometry.
-        num_heads: Number of attention heads.
-        dim: Embedding dimension of the input points.
-        head_dim: Dimension of each attention head.
-
-    Attributes:
-        manifold: The manifold object for geometric operations.
-        curvatures: Tensor of shape [num_heads, 1, 1] representing the curvature
-                    value used per head in geometric computations.
-        num_heads: Number of attention heads.
-        head_dim: Dimensionality of each attention head.
-        W_q: Linear layer projecting inputs to query vectors.
-        W_k: Linear layer projecting inputs to key vectors.
-        W_v: Manifold-aware linear layer projecting to value vectors.
-        attn: Stereographic multi-head attention module.
-        ff: Manifold-aware linear layer for the feedforward output.
-    """
-
-    def __init__(self, manifold: Manifold | ProductManifold, num_heads: int, dim: int, head_dim: int):
-        super().__init__()
-
-        self.manifold = manifold
         self.num_heads = num_heads
         self.head_dim = head_dim
-        self.curvatures = _reshape_curvatures(_get_curvatures(self.manifold), self.num_heads)
+        inner = num_heads * head_dim
 
-        self.W_q = nn.Linear(in_features=dim, out_features=self.num_heads * self.head_dim)
-        self.W_k = nn.Linear(in_features=dim, out_features=self.num_heads * self.head_dim)
-        self.W_v = KappaGCNLayer(in_features=dim, out_features=self.num_heads * self.head_dim, manifold=self.manifold)
+        # Linear maps live in the tangent space at the origin (Euclidean), so dimension changes are fine.
+        self.W_q = nn.Linear(dim, inner)
+        self.W_k = nn.Linear(dim, inner)
+        self.W_v = nn.Linear(dim, inner)
+        self.W_o = nn.Linear(inner, dim)
 
-        self.attn = GeometricLinearizedAttention(
-            curvatures=self.curvatures, num_heads=self.num_heads, head_dim=self.head_dim
-        )
-        self.ff = KappaGCNLayer(in_features=self.num_heads * self.head_dim, out_features=dim, manifold=self.manifold)
+        self.attn = GeometricLinearizedAttention(num_heads=num_heads, head_dim=head_dim)
 
     def forward(
         self,
@@ -488,125 +557,121 @@ class StereographicAttention(nn.Module):
         mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         """Forward pass for the stereographic attention layer."""
-        Q = self._split_heads(self.W_q(X))  # [B, H, N, D]
-        K = self._split_heads(self.W_k(X))
-        V = self._split_heads(self.W_v(X=X))
+        # Move to the tangent space at the origin; attention is Euclidean there.
+        H = self.manifold.manifold.logmap0(X)  # [N, dim]
 
-        attn_out = self.attn(Q, K, V, mask.unsqueeze(0).unsqueeze(0))  # type: ignore
-        attn_out = self._combine_heads(attn_out)
+        Q = self._split_heads(self.W_q(H))  # [H, N, head_dim]
+        K = self._split_heads(self.W_k(H))
+        V = self._split_heads(self.W_v(H))
 
-        out = self.ff(X=attn_out)
+        attn_out = self.attn(Q, K, V, mask)  # [H, N, head_dim]
+        attn_out = self._combine_heads(attn_out)  # [N, inner]
+        attn_out = self.W_o(attn_out)  # [N, dim]
 
-        return out
+        # Back onto the manifold.
+        return self.manifold.manifold.expmap0(attn_out)
 
     def _combine_heads(
-        self, X: Float[torch.Tensor, "n_nodes num_heads head_dim"]
-    ) -> Float[torch.Tensor, "n_nodes num_heads * head_dim"]:
-        """Combines multi-head tensor by merging head and feature dimensions.
-
-        Args:
-            X: Input tensor with shape.
-
-        Returns:
-            X: Reshaped tensor with shape (n_nodes, num_heads * head_dim).
-        """
-        X = X.transpose(0, 1)
-        X = X.reshape(X.size(0), self.num_heads * self.head_dim)
-        return X
+        self, X: Float[torch.Tensor, "num_heads n_nodes head_dim"]
+    ) -> Float[torch.Tensor, "n_nodes num_heads*head_dim"]:
+        """Merge the head and feature dimensions: ``[H, N, d] -> [N, H * d]``."""
+        X = X.transpose(0, 1)  # [N, H, d]
+        return X.reshape(X.size(0), self.num_heads * self.head_dim)
 
     def _split_heads(
-        self, X: Float[torch.Tensor, "n_nodes num_heads * head_dim"]
+        self, X: Float[torch.Tensor, "n_nodes num_heads*head_dim"]
     ) -> Float[torch.Tensor, "num_heads n_nodes head_dim"]:
-        """Splits the last dimension of the input into (num_heads, head_dim) and transposes to prepare for attention.
-
-        Args:
-            X: Input tensor with shape (n_nodes, num_heads * head_dim).
-
-        Returns:
-            X: Reshaped tensor with shape (num_heads, n_nodes, head_dim).
-        """
+        """Split the feature dimension into heads: ``[N, H * d] -> [H, N, d]``."""
         X = X.reshape(X.size(0), self.num_heads, self.head_dim)
-        X = X.transpose(0, 1)
-        return X
+        return X.transpose(0, 1)
 
 
 class StereographicTransformer(nn.Module):
-    """Stereographic Transformer Block.
+    """Stereographic Transformer block operating on a single graph of ``[n_nodes, dim]`` tokens.
+
+    A pre-norm transformer block adapted to a stereographic (product) manifold: each sublayer maps
+    points to the tangent space at the origin where the computation is Euclidean, and back onto the
+    manifold, with Mobius-addition residual connections. Tokens are graph nodes; the ``mask`` is the
+    adjacency matrix ``A_hat`` (``None`` for full attention). In the curvature-zero limit the block
+    reduces to a standard Euclidean linear-attention transformer block.
 
     Args:
-        manifold: Manifold or ProductManifold object defining the geometry.
+        manifold: Stereographic Manifold or ProductManifold defining the geometry.
         num_heads: Number of attention heads.
-        dim: Dimensionality of the input features.
+        dim: Dimensionality of the input features (``manifold.dim``).
         head_dim: Dimensionality of each attention head.
-        use_layer_norm: Whether to apply layer normalization in tangent space.
+        use_layer_norm: Whether to apply (tangent-space) layer normalization.
 
     Attributes:
         manifold: The manifold object for geometric operations.
-        curvatures: Manifold curvatures reshaped to [num_heads, 1, 1] for broadcasting.
         mha: Multi-head stereographic attention module.
-        norm1: First normalization layer (can be Identity or StereographicLayerNorm).
-        norm2: Second normalization layer.
-        mlpblock: Feedforward network in stereographic space.
+        norm1: First normalization layer (Identity or StereographicLayerNorm).
+        norm2: Second normalization layer (Identity or StereographicLayerNorm).
+        mlpblock: Feedforward network operating on the manifold.
         stereographic_activation: Activation wrapped to operate in tangent space.
     """
 
     def __init__(
-        self, manifold: Manifold | ProductManifold, num_heads: int, dim: int, head_dim: int, use_layer_norm: bool = True
+        self,
+        manifold: Manifold | ProductManifold,
+        num_heads: int,
+        dim: int,
+        head_dim: int,
+        use_layer_norm: bool = True,
     ):
         super().__init__()
 
-        # Check that manifold is stereographic
         if not manifold.is_stereographic:
             raise ValueError(
-                "Manifold must be stereographic for StereographicLayerNorm to work. Please use manifold.stereographic() to convert."
+                "Manifold must be stereographic for StereographicTransformer to work. "
+                "Please use manifold.stereographic() to convert."
             )
 
         self.manifold = manifold
-        self.curvatures = _reshape_curvatures(_get_curvatures(self.manifold), num_heads)
-        self.stereographic_activation = self.manifold.apply(nn.ReLU())
-        self.mha = StereographicAttention(manifold=self.manifold, num_heads=num_heads, dim=dim, head_dim=head_dim)
+        self.stereographic_activation = manifold.apply(nn.ReLU())
+        self.mha = StereographicAttention(manifold=manifold, num_heads=num_heads, dim=dim, head_dim=head_dim)
 
         if use_layer_norm:
-            self.norm1 = StereographicLayerNorm(manifold=self.manifold, embedding_dim=dim, curvatures=self.curvatures)
-            self.norm2 = StereographicLayerNorm(manifold=self.manifold, embedding_dim=dim, curvatures=self.curvatures)
+            self.norm1: nn.Module = StereographicLayerNorm(manifold=manifold, embedding_dim=dim)
+            self.norm2: nn.Module = StereographicLayerNorm(manifold=manifold, embedding_dim=dim)
         else:
             self.norm1 = nn.Identity()
             self.norm2 = nn.Identity()
 
-        self.mlpblock = nn.Sequential(
-            KappaGCNLayer(in_features=dim, out_features=dim, manifold=self.manifold),
-            self.stereographic_activation,
-            KappaGCNLayer(in_features=dim, out_features=dim, manifold=self.manifold),
+        self.ff1 = KappaGCNLayer(
+            in_features=dim,
+            out_features=dim,
+            manifold=manifold,
+            nonlinearity=torch.relu,
         )
+        self.ff2 = KappaGCNLayer(in_features=dim, out_features=dim, manifold=manifold, nonlinearity=None)
+
+    def _mlpblock(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
+        """Two-layer manifold feedforward network."""
+        return self.ff2(self.ff1(X))
 
     def forward(
         self,
         X: Float[torch.Tensor, "n_nodes dim"],
         mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     ) -> Float[torch.Tensor, "n_nodes dim"]:
-        """Forward pass through the stereographic transformer block."""
-        X = geoopt.manifolds.stereographic.math.mobius_add(self.mha(self.norm1(X), mask), X, self.curvatures)
-        X = geoopt.manifolds.stereographic.math.project(X, self.curvatures)
-        X = geoopt.manifolds.stereographic.math.mobius_add(self.mlpblock(self.norm2(X)), X, self.curvatures)
-        X = geoopt.manifolds.stereographic.math.project(X, self.curvatures)
+        """Forward pass through the stereographic transformer block.
+
+        Args:
+            X: Node features as points on the manifold, shape ``[n_nodes, dim]``.
+            mask: Optional adjacency matrix ``A_hat``; ``None`` means full attention.
+
+        Returns:
+            Updated node features as points on the manifold, shape ``[n_nodes, dim]``.
+        """
+        man = self.manifold.manifold
+
+        # Pre-norm attention sublayer with Mobius-addition residual.
+        attn = self.mha(self.norm1(X), mask)
+        X = man.projx(man.mobius_add(attn, X))
+
+        # Pre-norm feedforward sublayer with Mobius-addition residual.
+        ff = self._mlpblock(self.norm2(X))
+        X = man.projx(man.mobius_add(ff, X))
 
         return X
-
-
-def _reshape_curvatures(curvatures: float | list[float], num_heads: int) -> Float[torch.Tensor, "num_heads 1 1"]:
-    """Helper function to reshape curvature(s) for use in multi-head stereographic attention."""
-    if isinstance(curvatures, float):
-        output_curvatures = torch.tensor([curvatures] * num_heads, dtype=torch.float)
-    else:
-        output_curvatures = torch.tensor(curvatures, dtype=torch.float)
-    return output_curvatures[:, None, None]
-
-
-def _get_curvatures(manifold: Manifold | ProductManifold) -> float | list[float]:
-    """Helper function to retrieve curvature(s) from a Manifold or ProductManifold."""
-    if isinstance(manifold, ProductManifold):
-        return manifold.curvatures
-    elif isinstance(manifold, Manifold):
-        return manifold.curvature
-    else:
-        raise TypeError("Expected a Manifold or ProductManifold class.")
