@@ -10,7 +10,14 @@ permissions:
   contents: read
   pull-requests: write
 
-jobs:  
+# Pin a stable Hugging Face cache root for every job/step. `datasets`/`huggingface_hub`
+# resolve their cache under $HF_HOME, so fixing it here guarantees the path we cache with
+# actions/cache is exactly the path the library reads/writes. Relying on the platform default
+# (~/.cache/huggingface) is fragile and silently breaks if the default ever changes.
+env:
+  HF_HOME: ${{ github.workspace }}/.hf_cache
+
+jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -28,6 +35,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
+
+      # Restore the Hugging Face dataset cache. test_embedders / test_curvature_estimation
+      # call load_hf, so even this job needs the datasets. Key is stable across runs but
+      # versioned by the dataset list so adding/removing datasets invalidates it.
+      - name: Cache HuggingFace datasets
+        id: hf-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: ${{ runner.os }}-huggingface-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
+          restore-keys: |
+            ${{ runner.os }}-huggingface-
+
+      # On a cache hit, run datasets fully offline so load_dataset serves from the restored
+      # cache with zero network round-trips (no per-dataset revision check, no Hub rate limits).
+      # On a miss we stay online so the run can download and populate the cache for next time.
+      - name: Enable HuggingFace offline mode on cache hit
+        if: steps.hf-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "HF_HUB_OFFLINE=1" >> "$GITHUB_ENV"
+          echo "HF_DATASETS_OFFLINE=1" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
@@ -75,7 +103,7 @@ jobs:
   # Dataloaders run in parallel, for speed
   test-dataloaders:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -87,13 +115,19 @@ jobs:
           cache: "pip"
 
       - name: Cache HuggingFace datasets
+        id: hf-cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/huggingface
-          key: ${{ runner.os }}-huggingface-dataloaders-v1
+          path: ${{ env.HF_HOME }}
+          key: ${{ runner.os }}-huggingface-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
           restore-keys: |
-            ${{ runner.os }}-huggingface-dataloaders-
             ${{ runner.os }}-huggingface-
+
+      - name: Enable HuggingFace offline mode on cache hit
+        if: steps.hf-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "HF_HUB_OFFLINE=1" >> "$GITHUB_ENV"
+          echo "HF_DATASETS_OFFLINE=1" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
@@ -112,4 +146,3 @@ jobs:
           verbose: true
           flags: dataloaders
           name: dataloaders
-
