@@ -99,12 +99,7 @@ class KappaGCNLayer(torch.nn.Module):
             AXW = XW
         elif isinstance(self.manifold, ProductManifold):
             XWs = self.manifold.factorize(XW)
-            AXW = torch.hstack(
-                [
-                    self._left_multiply(A_hat, XW, M)
-                    for XW, M in zip(XWs, self.manifold.P, strict=False)
-                ]
-            )
+            AXW = torch.hstack([self._left_multiply(A_hat, XW, M) for XW, M in zip(XWs, self.manifold.P, strict=False)])
         else:
             AXW = self._left_multiply(A_hat, XW, self.manifold)
 
@@ -199,9 +194,7 @@ class StereographicLogits(nn.Module):
         self.W = nn.Parameter(torch.randn(manifold.dim, out_features) * 0.01)
 
         # Bias points on the manifold
-        self.p_ks = geoopt.ManifoldParameter(
-            torch.zeros(out_features, manifold.dim), manifold=manifold.manifold
-        )
+        self.p_ks = geoopt.ManifoldParameter(torch.zeros(out_features, manifold.dim), manifold=manifold.manifold)
 
     def _get_logits_single_manifold(
         self,
@@ -269,9 +262,7 @@ class StereographicLogits(nn.Module):
         bs = M.factorize(b)
         Ws = [w.T for w in M.factorize(W.T)]
         res = [
-            self._get_logits_single_manifold(
-                X_man, W_man, b_man, man, return_inner_products=True
-            )
+            self._get_logits_single_manifold(X_man, W_man, b_man, man, return_inner_products=True)
             for X_man, W_man, b_man, man in zip(Xs, Ws, bs, M.P, strict=False)
         ]
 
@@ -306,13 +297,9 @@ class StereographicLogits(nn.Module):
         """
         # Compute logits based on manifold type
         if isinstance(self.manifold, ProductManifold):
-            logits = self._get_logits_product_manifold(
-                X, self.W, self.p_ks, self.manifold
-            )
+            logits = self._get_logits_product_manifold(X, self.W, self.p_ks, self.manifold)
         else:
-            logits = self._get_logits_single_manifold(
-                X, self.W, self.p_ks, self.manifold, return_inner_products=False
-            )
+            logits = self._get_logits_single_manifold(X, self.W, self.p_ks, self.manifold, return_inner_products=False)
 
         # Optional aggregation via adjacency matrix
         if A_hat is not None and aggregate_logits:
@@ -337,9 +324,7 @@ class FermiDiracDecoder(nn.Module):
             0.0, respectively.
     """
 
-    def __init__(
-        self, manifold: Manifold | ProductManifold, learnable_params: bool = True
-    ):
+    def __init__(self, manifold: Manifold | ProductManifold, learnable_params: bool = True):
         super().__init__()
 
         self.manifold = manifold
@@ -403,9 +388,7 @@ class StereographicLayerNorm(nn.Module):
         self.stereographic_norm = self.manifold.apply(nn.LayerNorm(embedding_dim))
         self.curvatures = curvatures
 
-    def forward(
-        self, X: Float[torch.Tensor, "n_nodes dim"]
-    ) -> Float[torch.Tensor, "n_nodes dim"]:
+    def forward(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
         """Apply layer normalization on the stereographic manifold."""
         norm_X = self.stereographic_norm(X)
         output = geoopt.manifolds.stereographic.math.project(norm_X, self.curvatures)
@@ -456,16 +439,10 @@ class GeometricLinearizedAttention(nn.Module):
         Returns:
             Output tensor after applying attention.
         """
-        v1 = geoopt.manifolds.stereographic.math.parallel_transport0back(
-            V, Q, k=self.curvatures
-        )
-        v2 = geoopt.manifolds.stereographic.math.parallel_transport0back(
-            V, K, k=self.curvatures
-        )
+        v1 = geoopt.manifolds.stereographic.math.parallel_transport0back(V, Q, k=self.curvatures)
+        v2 = geoopt.manifolds.stereographic.math.parallel_transport0back(V, K, k=self.curvatures)
 
-        gamma = geoopt.manifolds.stereographic.math.lambda_x(
-            x=V, k=self.curvatures, keepdim=True, dim=-1
-        )
+        gamma = geoopt.manifolds.stereographic.math.lambda_x(x=V, k=self.curvatures, keepdim=True, dim=-1)
         denominator = geoopt.utils.clamp_abs((gamma - 1), self._clamp_epsilon)
 
         x = ((gamma / denominator) * V) * mask[None, :, None]
@@ -475,9 +452,7 @@ class GeometricLinearizedAttention(nn.Module):
 
         # Linearized approximation
         v2_cumsum = v2.sum(dim=-2)  # [B, H, D]
-        D = torch.einsum(
-            "...nd,...d->...n", v1, v2_cumsum.type_as(v1)
-        )  # normalization terms
+        D = torch.einsum("...nd,...d->...n", v1, v2_cumsum.type_as(v1))  # normalization terms
         D_inv = 1.0 / D.masked_fill_(D == 0, self._epsilon)
         context = torch.einsum("...nd,...ne->...de", v2, x)
         X = torch.einsum("...de,...nd,...n->...ne", context, v1, D_inv)
@@ -528,16 +503,10 @@ class StereographicAttention(nn.Module):
         self.manifold = manifold
         self.num_heads = num_heads
         self.head_dim = head_dim
-        self.curvatures = _reshape_curvatures(
-            _get_curvatures(self.manifold), self.num_heads
-        )
+        self.curvatures = _reshape_curvatures(_get_curvatures(self.manifold), self.num_heads)
 
-        self.W_q = nn.Linear(
-            in_features=dim, out_features=self.num_heads * self.head_dim
-        )
-        self.W_k = nn.Linear(
-            in_features=dim, out_features=self.num_heads * self.head_dim
-        )
+        self.W_q = nn.Linear(in_features=dim, out_features=self.num_heads * self.head_dim)
+        self.W_k = nn.Linear(in_features=dim, out_features=self.num_heads * self.head_dim)
         self.W_v = KappaGCNLayer(
             in_features=dim,
             out_features=self.num_heads * self.head_dim,
@@ -640,17 +609,11 @@ class StereographicTransformer(nn.Module):
         self.manifold = manifold
         self.curvatures = _reshape_curvatures(_get_curvatures(self.manifold), num_heads)
         self.stereographic_activation = self.manifold.apply(nn.ReLU())
-        self.mha = StereographicAttention(
-            manifold=self.manifold, num_heads=num_heads, dim=dim, head_dim=head_dim
-        )
+        self.mha = StereographicAttention(manifold=self.manifold, num_heads=num_heads, dim=dim, head_dim=head_dim)
 
         if use_layer_norm:
-            self.norm1 = StereographicLayerNorm(
-                manifold=self.manifold, embedding_dim=dim, curvatures=self.curvatures
-            )
-            self.norm2 = StereographicLayerNorm(
-                manifold=self.manifold, embedding_dim=dim, curvatures=self.curvatures
-            )
+            self.norm1 = StereographicLayerNorm(manifold=self.manifold, embedding_dim=dim, curvatures=self.curvatures)
+            self.norm2 = StereographicLayerNorm(manifold=self.manifold, embedding_dim=dim, curvatures=self.curvatures)
         else:
             self.norm1 = nn.Identity()
             self.norm2 = nn.Identity()
@@ -667,21 +630,15 @@ class StereographicTransformer(nn.Module):
         mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         """Forward pass through the stereographic transformer block."""
-        X = geoopt.manifolds.stereographic.math.mobius_add(
-            self.mha(self.norm1(X), mask), X, self.curvatures
-        )
+        X = geoopt.manifolds.stereographic.math.mobius_add(self.mha(self.norm1(X), mask), X, self.curvatures)
         X = geoopt.manifolds.stereographic.math.project(X, self.curvatures)
-        X = geoopt.manifolds.stereographic.math.mobius_add(
-            self.mlpblock(self.norm2(X)), X, self.curvatures
-        )
+        X = geoopt.manifolds.stereographic.math.mobius_add(self.mlpblock(self.norm2(X)), X, self.curvatures)
         X = geoopt.manifolds.stereographic.math.project(X, self.curvatures)
 
         return X
 
 
-def _reshape_curvatures(
-    curvatures: float | list[float], num_heads: int
-) -> Float[torch.Tensor, "num_heads 1 1"]:
+def _reshape_curvatures(curvatures: float | list[float], num_heads: int) -> Float[torch.Tensor, "num_heads 1 1"]:
     """Helper function to reshape curvature(s) for use in multi-head stereographic attention."""
     if isinstance(curvatures, float):
         output_curvatures = torch.tensor([curvatures] * num_heads, dtype=torch.float)

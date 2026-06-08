@@ -8,9 +8,7 @@ if os.getenv("BEARTYPE_ENABLE", "false").lower() == "true":
     from jaxtyping import install_import_hook
 
     install_import_hook("manify", "beartype.beartype")
-    print(
-        "Beartype import hook installed for Manify. Will use beartype for type checking."
-    )
+    print("Beartype import hook installed for Manify. Will use beartype for type checking.")
 
 from manify.clustering import RiemannianFuzzyKMeans
 from manify.curvature_estimation import (

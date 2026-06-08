@@ -44,9 +44,7 @@ def get_A_hat(
     # Optional steps to make symmetric and add self-loops
     if make_symmetric and not torch.allclose(A, A.T):
         A = A + A.T
-    if add_self_loops and not torch.allclose(
-        torch.diag(A), torch.ones(A.shape[0], dtype=A.dtype, device=A.device)
-    ):
+    if add_self_loops and not torch.allclose(torch.diag(A), torch.ones(A.shape[0], dtype=A.dtype, device=A.device)):
         A = A + torch.eye(A.shape[0], device=A.device, dtype=A.dtype)
 
     # Get degree matrix
@@ -94,15 +92,11 @@ class KappaGCN(BasePredictor, torch.nn.Module):
         output_dim: int,
         num_hidden: int = 2,
         nonlinearity: Callable = torch.relu,
-        task: Literal[
-            "classification", "regression", "link_prediction"
-        ] = "classification",
+        task: Literal["classification", "regression", "link_prediction"] = "classification",
         random_state: int | None = None,
         device: str | None = None,
     ):
-        BasePredictor.__init__(
-            self, pm=pm, task=task, random_state=random_state, device=device
-        )
+        BasePredictor.__init__(self, pm=pm, task=task, random_state=random_state, device=device)
         torch.nn.Module.__init__(self)
 
         self.pm = pm
@@ -188,11 +182,7 @@ class KappaGCN(BasePredictor, torch.nn.Module):
         A = A.clone() if A is not None else None
 
         # Convert A to A_hat
-        A_hat = (
-            get_A_hat(A, make_symmetric=True, add_self_loops=True)
-            if A is not None
-            else None
-        )
+        A_hat = get_A_hat(A, make_symmetric=True, add_self_loops=True) if A is not None else None
 
         # Collect all paramters
         euclidean_params = []
@@ -207,11 +197,7 @@ class KappaGCN(BasePredictor, torch.nn.Module):
 
         # Optimizers
         opt = torch.optim.Adam(euclidean_params, lr=lr)
-        ropt = (
-            geoopt.optim.RiemannianAdam(riemannian_params, lr=lr)
-            if riemannian_params
-            else None
-        )
+        ropt = geoopt.optim.RiemannianAdam(riemannian_params, lr=lr) if riemannian_params else None
 
         if self.task == "classification":
             loss_fn = torch.nn.CrossEntropyLoss()
@@ -245,9 +231,7 @@ class KappaGCN(BasePredictor, torch.nn.Module):
             # Progress bar
             if use_tqdm:
                 my_tqdm.update(1)
-                my_tqdm.set_description(
-                    f"Epoch {i + 1}/{epochs}, Loss: {loss.item():.4f}"
-                )
+                my_tqdm.set_description(f"Epoch {i + 1}/{epochs}, Loss: {loss.item():.4f}")
 
             # Early termination for nan loss
             if torch.isnan(loss):
@@ -279,11 +263,7 @@ class KappaGCN(BasePredictor, torch.nn.Module):
         # Copy everything
         X = X.clone()
         A = A.clone() if A is not None else None
-        A_hat = (
-            get_A_hat(A, make_symmetric=True, add_self_loops=True)
-            if A is not None
-            else None
-        )
+        A_hat = get_A_hat(A, make_symmetric=True, add_self_loops=True) if A is not None else None
 
         # Get edges for test set
         self.eval()

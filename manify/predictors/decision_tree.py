@@ -37,10 +37,7 @@ def _angular_greater(
 
 def _get_info_gains(
     comparisons: Float[torch.Tensor, "query_batch dims key_batch"],
-    labels: (
-        Float[torch.Tensor, "query_batch n_classes"]
-        | Float[torch.Tensor, "query_batch"]
-    ),
+    labels: (Float[torch.Tensor, "query_batch n_classes"] | Float[torch.Tensor, "query_batch"]),
     criterion: Literal["gini", "mse"] = "gini",
     min_values_leaf: int = 1,
     eps: float = 1e-10,
@@ -137,21 +134,15 @@ def _get_info_gains_nobatch(
     """
     # Matrix-multiply to get counts of labels in left and right splits
     if criterion == "gini":
-        pos_labels = torch.zeros(
-            (angles.shape[0], angles.shape[1], labels.shape[1]), device=angles.device
-        )
-        neg_labels = torch.zeros(
-            (angles.shape[0], angles.shape[1], labels.shape[1]), device=angles.device
-        )
+        pos_labels = torch.zeros((angles.shape[0], angles.shape[1], labels.shape[1]), device=angles.device)
+        neg_labels = torch.zeros((angles.shape[0], angles.shape[1], labels.shape[1]), device=angles.device)
 
         for d in range(angles.shape[1]):
             for j in range(0, angles.shape[0]):
                 mask = _angular_greater(angles[:, d], angles[j, d])
 
                 # Expanding the labels to match the broadcasting needs of the mask
-                pos_labels_entry = (
-                    mask.float() * labels
-                )  # [batch_size, labels.shape[1]]
+                pos_labels_entry = mask.float() * labels  # [batch_size, labels.shape[1]]
                 neg_labels_entry = ~mask * labels  # [batch_size, labels.shape[1]]
 
                 # Assign the calculated values to the respective positions in the final tensors
@@ -195,22 +186,17 @@ def _get_split(
     mask: Bool[torch.Tensor, "query_batch"],
     angles: Float[torch.Tensor, "query_batch dims"],
     comparisons: Float[torch.Tensor, "query_batch dims key_batch"],
-    labels: (
-        Float[torch.Tensor, "query_batch n_classes"]
-        | Float[torch.Tensor, "query_batch"]
-    ),
+    labels: (Float[torch.Tensor, "query_batch n_classes"] | Float[torch.Tensor, "query_batch"]),
 ) -> tuple[
     tuple[
         Float[torch.Tensor, "query_batch_neg dims"],
         Float[torch.Tensor, "query_batch_neg dims query_batch_neg"],
-        Float[torch.Tensor, "query_batch_neg n_classes"]
-        | Float[torch.Tensor, "query_batch_neg"],
+        Float[torch.Tensor, "query_batch_neg n_classes"] | Float[torch.Tensor, "query_batch_neg"],
     ],
     tuple[
         Float[torch.Tensor, "query_batch_pos dims"],
         Float[torch.Tensor, "query_batch_pos dims query_batch_pos"],
-        Float[torch.Tensor, "query_batch_pos n_classes"]
-        | Float[torch.Tensor, "query_batch_pos"],
+        Float[torch.Tensor, "query_batch_pos n_classes"] | Float[torch.Tensor, "query_batch_pos"],
     ],
 ]:
     """Split tensors into negative and positive classes based on the mask.
@@ -286,9 +272,7 @@ class ProductSpaceDT(BasePredictor):
         min_samples_leaf: int = 1,
         min_samples_split: int = 2,
         min_impurity_decrease: float = 0.0,
-        task: Literal[
-            "classification", "regression", "link_prediction"
-        ] = "classification",
+        task: Literal["classification", "regression", "link_prediction"] = "classification",
         use_special_dims: bool = False,
         batch_size: int | None = None,
         n_features: Literal["d", "d_choose_2"] = "d",
@@ -301,9 +285,7 @@ class ProductSpaceDT(BasePredictor):
 
         # Raise error if manifold is stereographic
         if pm.is_stereographic:
-            raise ValueError(
-                "Stereographic manifolds are not supported. Use a different representation."
-            )
+            raise ValueError("Stereographic manifolds are not supported. Use a different representation.")
         if task == "link_prediction":
             raise ValueError(
                 "Link prediction is not supported for decision trees. Please use utils.link_prediction to reframe as classification"
@@ -332,26 +314,14 @@ class ProductSpaceDT(BasePredictor):
 
         # These will become important later, when fit is called
         self.nodes: list[_DecisionNode] = []  # For fitted nodes
-        self.permutations: Int[torch.Tensor, "n_classes"] | None = (
-            None  # If used as part of a random forest
-        )
+        self.permutations: Int[torch.Tensor, "n_classes"] | None = None  # If used as part of a random forest
         self.angle2man: list[int] = []  # Maps preprocessed angles to manifold indices
-        self.special_first: list[bool] = (
-            []
-        )  # Whether the first dimension is special in a projection
-        self.angle_dims: list[tuple[int, int]] = (
-            []
-        )  # Maps preprocessed angles to dimension indices
+        self.special_first: list[bool] = []  # Whether the first dimension is special in a projection
+        self.angle_dims: list[tuple[int, int]] = []  # Maps preprocessed angles to dimension indices
         self.tree: _DecisionNode = _DecisionNode()  # The root of the tree
-        self.classes_: Float[torch.Tensor, "n_classes"] = torch.empty(
-            0
-        )  # Initialize as an empty tensor
-        self.labels_: Int[torch.Tensor, "batch n_classes"] = torch.tensor(
-            []
-        )  # sklearn-style labels
-        self.signature: list[tuple[float, int]] = (
-            pm.signature
-        )  # The signature of the manifold
+        self.classes_: Float[torch.Tensor, "n_classes"] = torch.empty(0)  # Initialize as an empty tensor
+        self.labels_: Int[torch.Tensor, "batch n_classes"] = torch.tensor([])  # sklearn-style labels
+        self.signature: list[tuple[float, int]] = pm.signature  # The signature of the manifold
 
     def _preprocess(
         self,
@@ -359,9 +329,7 @@ class ProductSpaceDT(BasePredictor):
         y: Real[torch.Tensor, "batch"] | None = None,
     ) -> tuple[
         Float[torch.Tensor, "batch intrinsic_dim"],  # angles
-        Float[torch.Tensor, "batch n_classes"]
-        | Float[torch.Tensor, "batch"]
-        | Float[torch.Tensor, "0"],  # labels
+        Float[torch.Tensor, "batch n_classes"] | Float[torch.Tensor, "batch"] | Float[torch.Tensor, "0"],  # labels
         Float[torch.Tensor, "batch intrinsic_dim batch"],  # comparisons
     ]:
         """Preprocessing function for the new version of ProductDT.
@@ -502,11 +470,7 @@ class ProductSpaceDT(BasePredictor):
 
         # We have the angle, but ideally we would like the *midpoint* angle.
         # So we need to grab the closest angle from the negative class:
-        angle_comparisons = (
-            comparisons[n, d]
-            if self.batched
-            else _angular_greater(angles[:, d], theta_pos).flatten()
-        )
+        angle_comparisons = comparisons[n, d] if self.batched else _angular_greater(angles[:, d], theta_pos).flatten()
         if (angle_comparisons == 1.0).all():
             theta_neg = theta_pos
         else:
@@ -514,9 +478,7 @@ class ProductSpaceDT(BasePredictor):
             theta_neg = angles[angle_comparisons == 0.0, d][n_neg]
 
         # Get manifold
-        active_dim = (
-            d.item() if self.permutations is None else self.permutations[d].item()
-        )
+        active_dim = d.item() if self.permutations is None else self.permutations[d].item()
         manifold = self.pm.P[self.angle2man[active_dim]]
         special_first_bool = self.special_first[active_dim]
 
@@ -591,9 +553,7 @@ class ProductSpaceDT(BasePredictor):
         """
 
         def _halt(
-            labels: (
-                Float[torch.Tensor, "batch n_classes"] | Real[torch.Tensor, "batch"]
-            ),
+            labels: (Float[torch.Tensor, "batch n_classes"] | Real[torch.Tensor, "batch"]),
         ) -> _DecisionNode:
             """Create a leaf node when halting conditions are met."""
             probs, value = self._leaf_values(labels)
@@ -616,14 +576,8 @@ class ProductSpaceDT(BasePredictor):
             return _halt(labels)
 
         # Get the best split
-        n, d, theta = self._get_best_split(
-            ig=ig, angles=angles, comparisons=comparisons
-        )
-        mask = (
-            comparisons[n, d].bool()
-            if self.batched
-            else _angular_greater(angles[:, d], theta).flatten()
-        )
+        n, d, theta = self._get_best_split(ig=ig, angles=angles, comparisons=comparisons)
+        mask = comparisons[n, d].bool() if self.batched else _angular_greater(angles[:, d], theta).flatten()
         (
             (angles_neg, comparisons_neg, labels_neg),
             (
@@ -663,18 +617,14 @@ class ProductSpaceDT(BasePredictor):
             probs = y.sum(dim=0) / y.sum()
             return probs, probs.argmax()
 
-    def _left(
-        self, angles_row: Float[torch.Tensor, "intrinsic_dim"], node: _DecisionNode
-    ) -> bool:
+    def _left(self, angles_row: Float[torch.Tensor, "intrinsic_dim"], node: _DecisionNode) -> bool:
         """Boolean: Go left? Works on a preprocessed input vector."""
         return _angular_greater(  # type:ignore
             torch.tensor(node.theta, device=angles_row.device).flatten(),
             angles_row[node.feature].flatten(),
         ).item()
 
-    def _traverse(
-        self, x: Float[torch.Tensor, "intrinsic_dim"], node: _DecisionNode
-    ) -> _DecisionNode:
+    def _traverse(self, x: Float[torch.Tensor, "intrinsic_dim"], node: _DecisionNode) -> _DecisionNode:
         """Traverse a decision tree for a single point."""
         # Leaf case
         if node.left is None and node.right is None:
@@ -683,18 +633,14 @@ class ProductSpaceDT(BasePredictor):
         return self._traverse(x, node.left) if self._left(x, node) else self._traverse(x, node.right)  # type: ignore
 
     @torch.no_grad()  # type: ignore
-    def predict_proba(
-        self, X: Float[torch.Tensor, "batch intrinsic_dim"]
-    ) -> Float[torch.Tensor, "batch n_classes"]:
+    def predict_proba(self, X: Float[torch.Tensor, "batch intrinsic_dim"]) -> Float[torch.Tensor, "batch n_classes"]:
         """Predict class probabilities for samples in X."""
         if self.use_special_dims:
             X, _ = self._aggregate_special_dims(X)
         angles, _, _ = self._preprocess(X=X)
         if self.permutations is not None:
             angles = angles[:, self.permutations]
-        return torch.vstack(
-            [self._traverse(angles_row, self.tree).probs for angles_row in angles]
-        )
+        return torch.vstack([self._traverse(angles_row, self.tree).probs for angles_row in angles])
 
 
 class ProductSpaceRF(BasePredictor):
@@ -724,9 +670,7 @@ class ProductSpaceRF(BasePredictor):
 
         # Raise error if manifold is stereographic
         if pm.is_stereographic:
-            raise ValueError(
-                "Stereographic manifolds are not supported. Use a different representation."
-            )
+            raise ValueError("Stereographic manifolds are not supported. Use a different representation.")
         if task == "link_prediction":
             raise ValueError(
                 "Link prediction is not supported for decision trees. Please use utils.link_prediction to reframe as classification"
@@ -739,9 +683,7 @@ class ProductSpaceRF(BasePredictor):
         self.max_depth = tree_kwargs["max_depth"] = max_depth or -1
         self.min_samples_leaf = tree_kwargs["min_samples_leaf"] = min_samples_leaf
         self.min_samples_split = tree_kwargs["min_samples_split"] = min_samples_split
-        self.min_impurity_decrease = tree_kwargs["min_impurity_decrease"] = (
-            min_impurity_decrease
-        )
+        self.min_impurity_decrease = tree_kwargs["min_impurity_decrease"] = min_impurity_decrease
         self.use_special_dims = tree_kwargs["use_special_dims"] = use_special_dims
         self.n_features = tree_kwargs["n_features"] = n_features
         self.batch_size = tree_kwargs["batch_size"] = batch_size
@@ -769,9 +711,7 @@ class ProductSpaceRF(BasePredictor):
 
     def _generate_subsample(
         self, n_rows: int, n_cols: int, n_trees: int
-    ) -> tuple[
-        Int[torch.Tensor, "n_trees n_rows"], Int[torch.Tensor, "n_trees n_cols"]
-    ]:
+    ) -> tuple[Int[torch.Tensor, "n_trees n_rows"], Int[torch.Tensor, "n_trees n_cols"]]:
         # Get number of dimensions in our subsample
         if isinstance(self.max_features, int):
             n_cols_sample = min(self.max_features, n_cols)
@@ -786,9 +726,7 @@ class ProductSpaceRF(BasePredictor):
 
         # Subsample - returns indices
         idx_sample = torch.randint(0, n_rows, (n_trees, n_rows))
-        idx_dim = torch.stack(
-            [torch.randperm(n_cols)[:n_cols_sample] for _ in range(n_trees)]
-        )
+        idx_dim = torch.stack([torch.randperm(n_cols)[:n_cols_sample] for _ in range(n_trees)])
 
         return idx_sample, idx_dim
 
@@ -821,19 +759,13 @@ class ProductSpaceRF(BasePredictor):
 
         # Subsample - just the indices
         n, d = angles.shape
-        idx_sample_all, idx_dim_all = self._generate_subsample(
-            n_rows=n, n_cols=d, n_trees=self.n_estimators
-        )
+        idx_sample_all, idx_dim_all = self._generate_subsample(n_rows=n, n_cols=d, n_trees=self.n_estimators)
 
         # Fit trees
-        for tree, idx_sample, idx_dim in zip(
-            self.trees, idx_sample_all, idx_dim_all, strict=False
-        ):
+        for tree, idx_sample, idx_dim in zip(self.trees, idx_sample_all, idx_dim_all, strict=False):
             tree.permutations = idx_dim
             if self.batched:
-                comparisons_subsample = comparisons[idx_sample][:, idx_dim][
-                    :, :, idx_sample
-                ]
+                comparisons_subsample = comparisons[idx_sample][:, idx_dim][:, :, idx_sample]
             else:
                 comparisons_subsample = comparisons
             tree.tree = tree._fit_node(
@@ -847,8 +779,6 @@ class ProductSpaceRF(BasePredictor):
         return self
 
     @torch.no_grad()  # type: ignore
-    def predict_proba(
-        self, X: Float[torch.Tensor, "batch intrinsic_dim"]
-    ) -> Float[torch.Tensor, "batch n_classes"]:
+    def predict_proba(self, X: Float[torch.Tensor, "batch intrinsic_dim"]) -> Float[torch.Tensor, "batch n_classes"]:
         """Predict class probabilities for samples in X."""
         return torch.stack([tree.predict_proba(X) for tree in self.trees]).mean(dim=0)

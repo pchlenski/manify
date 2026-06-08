@@ -97,9 +97,7 @@ class BasePredictor(BaseEstimator, ABC):
         pass
 
     @abstractmethod
-    def predict_proba(
-        self, X: Float[torch.Tensor, "n_points n_features"]
-    ) -> Float[torch.Tensor, "n_points n_classes"]:
+    def predict_proba(self, X: Float[torch.Tensor, "n_points n_features"]) -> Float[torch.Tensor, "n_points n_classes"]:
         """Compute the predicted probabilities for the given features.
 
         Args:
@@ -110,9 +108,7 @@ class BasePredictor(BaseEstimator, ABC):
         """
         pass
 
-    def predict(
-        self, X: Float[torch.Tensor, "n_points n_features"], **kwargs: Any
-    ) -> Float[torch.Tensor, "n_points"]:
+    def predict(self, X: Float[torch.Tensor, "n_points n_features"], **kwargs: Any) -> Float[torch.Tensor, "n_points"]:
         """Compute the predicted classes for the given features.
 
         Args:
@@ -157,9 +153,7 @@ class BasePredictor(BaseEstimator, ABC):
 
         if self.task in ("classification", "link_prediction"):
             # Weighted accuracy (matches sklearn's accuracy_score with sample_weight)
-            out = (
-                (predictions == y).float() * sample_weight
-            ).sum().item() / total_weight.item()
+            out = ((predictions == y).float() * sample_weight).sum().item() / total_weight.item()
         else:  # regression
             # Weighted R^2 (matches sklearn's RegressorMixin.score: higher is better)
             y_mean = (y * sample_weight).sum() / total_weight

@@ -92,25 +92,21 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         self.beta = beta
         self.n_samples = n_samples
         self.reconstruction_loss = (
-            reconstruction_loss
-            if reconstruction_loss is not None
-            else torch.nn.MSELoss(reduction="none")
+            reconstruction_loss if reconstruction_loss is not None else torch.nn.MSELoss(reduction="none")
         )
         self.model_ = None
         self.loss_history_ = {}
         self.is_fitted_ = False
 
         # Ensure encoder last dimension is 2 * pm.intrinsic_dim:
-        assert (
-            encoder[-1].out_features == 2 * pm.dim
-        ), "Encoder output must match 2 * intrinsic dimension of manifold."
+        assert encoder[-1].out_features == 2 * pm.dim, "Encoder output must match 2 * intrinsic dimension of manifold."
 
         # Ensure decoder input dimension is pm.intrinsic_dim
-        assert (
-            decoder[0].in_features == pm.ambient_dim
-        ), "Decoder input must match ambient dimension of manifold."
+        assert decoder[0].in_features == pm.ambient_dim, "Decoder input must match ambient dimension of manifold."
 
-    def encode(self, x: Float[torch.Tensor, "batch_size n_features"]) -> tuple[
+    def encode(
+        self, x: Float[torch.Tensor, "batch_size n_features"]
+    ) -> tuple[
         Float[torch.Tensor, "batch_size n_latent"],
         Float[torch.Tensor, "batch_size n_latent"],
     ]:
@@ -136,9 +132,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         # z_mean = self.pm.expmap(u=z_mean_ambient, base=None)
         return z_mean_tangent, z_logvar
 
-    def decode(
-        self, z: Float[torch.Tensor, "batch_size n_ambient"]
-    ) -> Float[torch.Tensor, "batch_size n_features"]:
+    def decode(self, z: Float[torch.Tensor, "batch_size n_ambient"]) -> Float[torch.Tensor, "batch_size n_features"]:
         """Decodes latent points from the manifold space back to the input space.
 
         Takes points from the product manifold latent space and passes them through
@@ -153,7 +147,9 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         """
         return self.decoder(z)
 
-    def forward(self, x: Float[torch.Tensor, "batch_size n_features"]) -> tuple[
+    def forward(
+        self, x: Float[torch.Tensor, "batch_size n_features"]
+    ) -> tuple[
         Float[torch.Tensor, "batch_size n_features"],
         Float[torch.Tensor, "batch_size n_ambient"],
         list[Float[torch.Tensor, "batch_size n_latent n_latent"]],
@@ -179,17 +175,12 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         z_mean_tangent, z_logvars = self.encode(x)
 
         # Need to convert from implicit parameterization to extrinsic coordinates
-        z_mean_ambient = (
-            z_mean_tangent @ self.pm.projection_matrix
-        )  # Adds zeros in the right places
+        z_mean_ambient = z_mean_tangent @ self.pm.projection_matrix  # Adds zeros in the right places
         z_means = self.pm.expmap(u=z_mean_ambient, base=None)
 
         # Factorize log-variances; convert to covariances
         sigma_factorized = self.pm.factorize(z_logvars, intrinsic=True)
-        sigmas = [
-            torch.diag_embed(torch.exp(z_logvar) + 1e-8)
-            for z_logvar in sigma_factorized
-        ]
+        sigmas = [torch.diag_embed(torch.exp(z_logvar) + 1e-8) for z_logvar in sigma_factorized]
 
         # Sample and decode
         z = self.pm.sample(z_mean=z_means, sigma_factorized=sigmas)
@@ -199,9 +190,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
     def kl_divergence(
         self,
         z_mean: Float[torch.Tensor, "batch_size n_latent"],
-        sigma_factorized: list[
-            Float[torch.Tensor, "batch_size manifold_dim manifold_dim"]
-        ],
+        sigma_factorized: list[Float[torch.Tensor, "batch_size manifold_dim manifold_dim"]],
     ) -> Float[torch.Tensor, "batch_size"]:
         r"""Computes the KL divergence between posterior and prior distributions in the manifold.
 
@@ -225,22 +214,17 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         # Get KL divergence as the average of log q(z|x) - log p(z)
         means = torch.repeat_interleave(z_mean, self.n_samples, dim=0)
         sigmas_factorized_interleaved = [
-            torch.repeat_interleave(sigma, self.n_samples, dim=0)
-            for sigma in sigma_factorized
+            torch.repeat_interleave(sigma, self.n_samples, dim=0) for sigma in sigma_factorized
         ]
         # We want to use n_samples = 1 here, since we'll need to pass the interleaved means/sigmas to the log-likelihood
-        z_samples = self.pm.sample(
-            z_mean=means, sigma_factorized=sigmas_factorized_interleaved
-        )
+        z_samples = self.pm.sample(z_mean=means, sigma_factorized=sigmas_factorized_interleaved)
         log_qz = self.pm.log_likelihood(z_samples, means, sigmas_factorized_interleaved)
         log_pz = self.pm.log_likelihood(z_samples)
         return (log_qz - log_pz).view(-1, self.n_samples).mean(dim=1)
 
     def elbo(
         self, x: Float[torch.Tensor, "batch_size n_features"]
-    ) -> tuple[
-        Float[torch.Tensor, ""], Float[torch.Tensor, ""], Float[torch.Tensor, ""]
-    ]:
+    ) -> tuple[Float[torch.Tensor, ""], Float[torch.Tensor, ""], Float[torch.Tensor, ""]]:
         r"""Computes the Evidence Lower Bound (ELBO) for the VAE objective.
 
         The ELBO is the standard objective function for variational autoencoders, consisting of a reconstruction term
@@ -264,9 +248,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         """
         x_reconstructed, z_means, sigma_factorized = self(x)
         kld = self.kl_divergence(z_means, sigma_factorized)
-        ll = -self.reconstruction_loss(
-            x_reconstructed.view(x.shape[0], -1), x.view(x.shape[0], -1)
-        ).sum(dim=1)
+        ll = -self.reconstruction_loss(x_reconstructed.view(x.shape[0], -1), x.view(x.shape[0], -1)).sum(dim=1)
         return (ll - self.beta * kld).mean(), ll.mean(), kld.mean()
 
     def _grads_ok(self) -> bool:
@@ -336,11 +318,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         opt = torch.optim.Adam(
             [
                 {
-                    "params": [
-                        p
-                        for p in self.parameters()
-                        if p not in set(self.pm.parameters())
-                    ],
+                    "params": [p for p in self.parameters() if p not in set(self.pm.parameters())],
                     "lr": burn_in_lr,
                 },
                 {"params": self.pm.parameters(), "lr": 0},
@@ -375,16 +353,11 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
 
                 # TQDM management
                 my_tqdm.update(batch_size)
-                my_tqdm.set_description(
-                    f"L: {L.item():.3e}, ll: {ll.item():.3e}, kl: {kl.item():.3e}"
-                )
+                my_tqdm.set_description(f"L: {L.item():.3e}, ll: {ll.item():.3e}, kl: {kl.item():.3e}")
 
                 # Logging
                 if i % logging_interval == 0:
-                    d = {
-                        f"r{i}": f"{logscale.item():.3f}"
-                        for i, logscale in enumerate(self.pm.parameters())
-                    }
+                    d = {f"r{i}": f"{logscale.item():.3f}" for i, logscale in enumerate(self.pm.parameters())}
                     # d["D_avg"] = f"{d_avg(D_tt, D[train][:, train], pairwise=True):.4f}"
                     d["L_avg"] = f"{np.mean(losses['elbo'][-loss_window_size:]):.3e}"
                     d["ll_avg"] = f"{np.mean(losses['ll'][-loss_window_size:]):.3e}"
@@ -425,9 +398,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
             x_batch = X[i : i + batch_size]
             z_mean_tangent, _ = self.encode(x_batch)
             if expmap:
-                z_mean_ambient = (
-                    z_mean_tangent @ self.pm.projection_matrix
-                )  # Adds zeros in the right places
+                z_mean_ambient = z_mean_tangent @ self.pm.projection_matrix  # Adds zeros in the right places
                 z_mean = self.pm.expmap(u=z_mean_ambient, base=None)
             else:
                 z_mean = z_mean_tangent
