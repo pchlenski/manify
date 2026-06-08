@@ -81,8 +81,12 @@ class ProductSpaceSVM(BasePredictor):
         self.e_constraints = e_constraints
         self.eps = epsilon
         self.task = task
-        self.weights = torch.ones(len(pm.P), dtype=torch.float32) if weights is None else weights
-        assert len(self.weights) == len(pm.P), "Number of weights must match the number of manifolds."
+        self.weights = (
+            torch.ones(len(pm.P), dtype=torch.float32) if weights is None else weights
+        )
+        assert len(self.weights) == len(
+            pm.P
+        ), "Number of weights must match the number of manifolds."
 
     def fit(
         self,
@@ -153,8 +157,14 @@ class ProductSpaceSVM(BasePredictor):
                     eigvals, eigvecs = np.linalg.eigh(P_np)
                     plus = np.clip(eigvals, 0, None)
                     minus = np.clip(-eigvals, 0, None)
-                    Kp = (eigvecs @ np.diag(plus) @ eigvecs.T + (eigvecs @ np.diag(plus) @ eigvecs.T).T) * 0.5
-                    Km = (eigvecs @ np.diag(minus) @ eigvecs.T + (eigvecs @ np.diag(minus) @ eigvecs.T).T) * 0.5
+                    Kp = (
+                        eigvecs @ np.diag(plus) @ eigvecs.T
+                        + (eigvecs @ np.diag(plus) @ eigvecs.T).T
+                    ) * 0.5
+                    Km = (
+                        eigvecs @ np.diag(minus) @ eigvecs.T
+                        + (eigvecs @ np.diag(minus) @ eigvecs.T).T
+                    ) * 0.5
                     Bp = sqrtm_psd(Kp)
                     Bm = sqrtm_psd(Km)
 
@@ -163,18 +173,24 @@ class ProductSpaceSVM(BasePredictor):
                     r_h = abs(np.arcsinh(-(R**2) * C_H))
                     r = self.eps
 
-                    constraints.append(cp.norm(Bm @ beta_var, 2) <= np.sqrt(max(r, 0.0)))
-                    constraints.append(cp.norm(Bp @ beta_var, 2) <= np.sqrt(max(r + r_h, 0.0)))
+                    constraints.append(
+                        cp.norm(Bm @ beta_var, 2) <= np.sqrt(max(r, 0.0))
+                    )
+                    constraints.append(
+                        cp.norm(Bp @ beta_var, 2) <= np.sqrt(max(r + r_h, 0.0))
+                    )
 
             # solve
             prob = cp.Problem(cp.Minimize(-eps_var + cp.sum(zeta)), constraints)
             prob.solve(solver="SCS")
 
-            # save results
+            # save results. eps_var and b_var are length-1 cp.Variables, so their
+            # .value is a 1-element ndarray; index it before float() (numpy 2.x no
+            # longer coerces 1-element arrays to scalars implicitly).
             self.beta[cls_item] = np.ravel(beta_var.value)
             self.zeta[cls_item] = zeta.value
-            self.epsilon[cls_item] = float(eps_var.value)
-            self.b[cls_item] = float(b_var.value)
+            self.epsilon[cls_item] = float(np.ravel(eps_var.value)[0])
+            self.b[cls_item] = float(np.ravel(b_var.value)[0])
 
         # store training data
         self.X_train_ = torch.tensor(X_np, dtype=torch.float32)
@@ -193,11 +209,17 @@ class ProductSpaceSVM(BasePredictor):
         Returns:
             class_probabilities: Class probabilities for each test sample.
         """
-        X_tensor = torch.tensor(X, dtype=torch.float32) if not isinstance(X, torch.Tensor) else X
+        X_tensor = (
+            torch.tensor(X, dtype=torch.float32)
+            if not isinstance(X, torch.Tensor)
+            else X
+        )
         X_tensor = X_tensor.to(self.X_train_.device)
 
         Ks_test, _ = product_kernel(self.pm, self.X_train_, X_tensor)
-        Kt = torch.ones((self.X_train_.shape[0], X_tensor.shape[0]), device=X_tensor.device)
+        Kt = torch.ones(
+            (self.X_train_.shape[0], X_tensor.shape[0]), device=X_tensor.device
+        )
         for K_m, w in zip(Ks_test, self.weights, strict=False):
             Kt += w * K_m
         Kt_np = Kt.detach().cpu().numpy()
