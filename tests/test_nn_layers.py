@@ -59,9 +59,7 @@ def test_outputs_on_manifold():
         out_masked = block(X, torch.ones(X.shape[0], X.shape[0]))
 
     for o in (out, out_masked):
-        assert pm.manifold.check_point(
-            o
-        ), "Output must lie on the stereographic manifold"
+        assert pm.manifold.check_point(o), "Output must lie on the stereographic manifold"
         # Projection idempotence within tolerance.
         assert torch.allclose(pm.manifold.projx(o), o, atol=1e-4)
 
@@ -76,27 +74,21 @@ def test_permutation_equivariance_full_mask():
     with torch.no_grad():
         out = block(X)
         out_perm = block(X[perm])
-    assert torch.allclose(
-        out[perm], out_perm, atol=ATOL
-    ), "Block must be permutation equivariant (None mask)"
+    assert torch.allclose(out[perm], out_perm, atol=ATOL), "Block must be permutation equivariant (None mask)"
 
     # Same with an explicit all-ones mask (also permuted along both axes).
     mask = torch.ones(n, n)
     with torch.no_grad():
         out2 = block(X, mask)
         out2_perm = block(X[perm], mask[perm][:, perm])
-    assert torch.allclose(
-        out2[perm], out2_perm, atol=ATOL
-    ), "Block must be permutation equivariant (ones mask)"
+    assert torch.allclose(out2[perm], out2_perm, atol=ATOL), "Block must be permutation equivariant (ones mask)"
 
 
 def test_masking_blocks_influence():
     """A masked-out edge cannot let one node influence another's output."""
     pm, X = _make_points(SIGNATURE, n_nodes=6, seed=4)
     n, d = X.shape
-    block = StereographicTransformer(
-        pm, num_heads=2, dim=d, head_dim=3, use_layer_norm=False
-    ).eval()
+    block = StereographicTransformer(pm, num_heads=2, dim=d, head_dim=3, use_layer_norm=False).eval()
 
     # Diagonal mask: each node attends only to itself, so node 0 cannot see node 1.
     mask = torch.eye(n)
@@ -107,12 +99,8 @@ def test_masking_blocks_influence():
         out = block(X, mask)
         out_perturbed = block(X_perturbed, mask)
 
-    assert torch.allclose(
-        out[0], out_perturbed[0], atol=1e-6
-    ), "Masked-out node 1 must not affect node 0"
-    assert not torch.allclose(
-        out[1], out_perturbed[1], atol=1e-6
-    ), "Node 1's own perturbation should change its output"
+    assert torch.allclose(out[0], out_perturbed[0], atol=1e-6), "Masked-out node 1 must not affect node 0"
+    assert not torch.allclose(out[1], out_perturbed[1], atol=1e-6), "Node 1's own perturbation should change its output"
 
 
 def test_gradient_finiteness():
@@ -129,9 +117,7 @@ def test_gradient_finiteness():
     for name, p in block.named_parameters():
         if p.requires_grad:
             assert p.grad is not None, f"Parameter {name} received no gradient"
-            assert torch.isfinite(
-                p.grad
-            ).all(), f"Parameter {name} has non-finite gradient"
+            assert torch.isfinite(p.grad).all(), f"Parameter {name} has non-finite gradient"
             n_grad += 1
     assert n_grad > 0, "Block should have trainable parameters"
 
@@ -143,9 +129,7 @@ def test_kappa_to_zero_euclidean_limit():
 
     # Euclidean reference (curvature 0): logmap0/expmap0 are identities.
     pm0 = ProductManifold(signature=[(0.0, 4)], stereographic=True)
-    block0 = StereographicTransformer(
-        pm0, num_heads=2, dim=4, head_dim=3, use_layer_norm=False
-    ).eval()
+    block0 = StereographicTransformer(pm0, num_heads=2, dim=4, head_dim=3, use_layer_norm=False).eval()
     with torch.no_grad():
         out0 = block0(X)
     assert pm0.manifold.check_point(out0)
@@ -154,18 +138,14 @@ def test_kappa_to_zero_euclidean_limit():
     prev = None
     for eps in (1e-1, 1e-2, 1e-3):
         pm_eps = ProductManifold(signature=[(-eps, 2), (eps, 2)], stereographic=True)
-        block_eps = StereographicTransformer(
-            pm_eps, num_heads=2, dim=4, head_dim=3, use_layer_norm=False
-        ).eval()
+        block_eps = StereographicTransformer(pm_eps, num_heads=2, dim=4, head_dim=3, use_layer_norm=False).eval()
         block_eps.load_state_dict(block0.state_dict())
         with torch.no_grad():
             out_eps = block_eps(X)
         err = (out_eps - out0).abs().max().item()
         assert torch.isfinite(out_eps).all() and out_eps.shape == out0.shape
         if prev is not None:
-            assert (
-                err < prev
-            ), "Output should approach the Euclidean limit as curvature shrinks"
+            assert err < prev, "Output should approach the Euclidean limit as curvature shrinks"
         prev = err
     # At the smallest curvature the block is close to Euclidean (loose tolerance).
     assert prev < 1e-2, f"kappa->0 limit too far from Euclidean reference: {prev}"
@@ -184,9 +164,7 @@ def test_determinism_fixed_seed():
     with torch.no_grad():
         out_a = block_a(X)
         out_b = block_b(X)
-    assert torch.allclose(
-        out_a, out_b, atol=0.0
-    ), "Same seed must give identical outputs"
+    assert torch.allclose(out_a, out_b, atol=0.0), "Same seed must give identical outputs"
 
 
 def test_geometric_linearized_attention_full_matches_masked():
@@ -200,6 +178,4 @@ def test_geometric_linearized_attention_full_matches_masked():
     attn = GeometricLinearizedAttention(num_heads=n_heads, head_dim=head_dim)
     out_full = attn(Q, K, V, None)
     out_ones = attn(Q, K, V, torch.ones(n, n))
-    assert torch.allclose(
-        out_full, out_ones, atol=1e-5
-    ), "None mask should equal an all-ones mask"
+    assert torch.allclose(out_full, out_ones, atol=1e-5), "None mask should equal an all-ones mask"

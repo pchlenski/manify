@@ -31,11 +31,7 @@ class KappaGCNLayer(torch.nn.Module):
     """
 
     def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        manifold: Manifold,
-        nonlinearity: Callable | None = torch.relu,
+        self, in_features: int, out_features: int, manifold: Manifold, nonlinearity: Callable | None = torch.relu
     ):
         super().__init__()
 
@@ -49,10 +45,7 @@ class KappaGCNLayer(torch.nn.Module):
         self.manifold = manifold
 
     def _left_multiply(
-        self,
-        A: Float[torch.Tensor, "n_nodes n_nodes"],
-        X: Float[torch.Tensor, "n_nodes dim"],
-        M: Manifold,
+        self, A: Float[torch.Tensor, "n_nodes n_nodes"], X: Float[torch.Tensor, "n_nodes dim"], M: Manifold
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         r"""$\kappa$-left matrix multiply two matrices $\mathbf{A}$ and $\mathbf{X}$.
 
@@ -78,9 +71,7 @@ class KappaGCNLayer(torch.nn.Module):
         )
 
     def forward(
-        self,
-        X: Float[torch.Tensor, "n_nodes dim"],
-        A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+        self, X: Float[torch.Tensor, "n_nodes dim"], A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         """Forward pass for the Kappa GCN layer.
 
@@ -125,9 +116,7 @@ class KappaSequential(nn.Module):
         self.layers = nn.ModuleList(layers)
 
     def forward(
-        self,
-        X: Float[torch.Tensor, "n_nodes dim"],
-        A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+        self, X: Float[torch.Tensor, "n_nodes dim"], A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Float[torch.Tensor, "n_nodes out_dim"]:
         """Forward pass through all layers.
 
@@ -178,12 +167,7 @@ class StereographicLogits(nn.Module):
         apply_softmax: Whether to apply softmax to the output logits (default: False)
     """
 
-    def __init__(
-        self,
-        out_features: int,
-        manifold: Manifold | ProductManifold,
-        apply_softmax: bool = False,
-    ):
+    def __init__(self, out_features: int, manifold: Manifold | ProductManifold, apply_softmax: bool = False):
         super().__init__()
 
         self.out_features = out_features
@@ -204,10 +188,7 @@ class StereographicLogits(nn.Module):
         M: Manifold,
         return_inner_products: bool = False,
     ) -> (
-        tuple[
-            Float[torch.Tensor, "n_nodes n_classes"],
-            Float[torch.Tensor, "n_nodes n_classes"],
-        ]
+        tuple[Float[torch.Tensor, "n_nodes n_classes"], Float[torch.Tensor, "n_nodes n_classes"]]
         | Float[torch.Tensor, "n_nodes n_classes"]
     ):
         """Compute logits for a single manifold."""
@@ -337,9 +318,7 @@ class FermiDiracDecoder(nn.Module):
             self.register_buffer("bias", torch.tensor(0.0))
 
     def forward(
-        self,
-        X: Float[torch.Tensor, "n_nodes dim"],
-        A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+        self, X: Float[torch.Tensor, "n_nodes dim"], A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Float[torch.Tensor, "n_nodes n_nodes"]:
         """Forward pass through Fermi-Dirac decoder.
 
@@ -529,13 +508,7 @@ class StereographicAttention(nn.Module):
         restriction while remaining curvature-correct via ``logmap0``/``expmap0``.
     """
 
-    def __init__(
-        self,
-        manifold: Manifold | ProductManifold,
-        num_heads: int,
-        dim: int,
-        head_dim: int,
-    ):
+    def __init__(self, manifold: Manifold | ProductManifold, num_heads: int, dim: int, head_dim: int):
         super().__init__()
 
         self.manifold = manifold
@@ -552,9 +525,7 @@ class StereographicAttention(nn.Module):
         self.attn = GeometricLinearizedAttention(num_heads=num_heads, head_dim=head_dim)
 
     def forward(
-        self,
-        X: Float[torch.Tensor, "n_nodes dim"],
-        mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+        self, X: Float[torch.Tensor, "n_nodes dim"], mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         """Forward pass for the stereographic attention layer."""
         # Move to the tangent space at the origin; attention is Euclidean there.
@@ -612,12 +583,7 @@ class StereographicTransformer(nn.Module):
     """
 
     def __init__(
-        self,
-        manifold: Manifold | ProductManifold,
-        num_heads: int,
-        dim: int,
-        head_dim: int,
-        use_layer_norm: bool = True,
+        self, manifold: Manifold | ProductManifold, num_heads: int, dim: int, head_dim: int, use_layer_norm: bool = True
     ):
         super().__init__()
 
@@ -637,12 +603,7 @@ class StereographicTransformer(nn.Module):
             self.norm1 = nn.Identity()
             self.norm2 = nn.Identity()
 
-        self.ff1 = KappaGCNLayer(
-            in_features=dim,
-            out_features=dim,
-            manifold=manifold,
-            nonlinearity=torch.relu,
-        )
+        self.ff1 = KappaGCNLayer(in_features=dim, out_features=dim, manifold=manifold, nonlinearity=torch.relu)
         self.ff2 = KappaGCNLayer(in_features=dim, out_features=dim, manifold=manifold, nonlinearity=None)
 
     def _mlpblock(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
@@ -650,9 +611,7 @@ class StereographicTransformer(nn.Module):
         return self.ff2(self.ff1(X))
 
     def forward(
-        self,
-        X: Float[torch.Tensor, "n_nodes dim"],
-        mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+        self, X: Float[torch.Tensor, "n_nodes dim"], mask: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Float[torch.Tensor, "n_nodes dim"]:
         """Forward pass through the stereographic transformer block.
 
