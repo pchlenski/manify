@@ -33,6 +33,7 @@ Earlier versions of Manify included scripts to process raw data, which we have r
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 import torch
@@ -42,28 +43,36 @@ if TYPE_CHECKING:
     from jaxtyping import Float, Real
 
 
-def load_hf(
-    name: str, namespace: str = "manify"
+@functools.cache
+def _load_hf_cached(
+    name: str, namespace: str
 ) -> tuple[
-    Float[torch.Tensor, "n_points ..."] | None,  # features
-    Float[torch.Tensor, "n_points n_points"] | None,  # pairwise dists
-    Float[torch.Tensor, "n_points n_points"] | None,  # adjacency labels
-    Real[torch.Tensor, "n_points"] | None,  # labels
+    Float[torch.Tensor, "n_points ..."] | None,
+    Float[torch.Tensor, "n_points n_points"] | None,
+    Float[torch.Tensor, "n_points n_points"] | None,
+    Real[torch.Tensor, "n_points"] | None,
 ]:
-    """Load a dataset from HuggingFace Hub at {namespace}/{name}.
+    """In-process memoized implementation of :func:`load_hf`.
+
+    Results are cached per ``(name, namespace)`` for the lifetime of the process so that
+    repeatedly loading the same dataset (e.g. across multiple tests in a single pytest run)
+    only resolves and decodes the dataset once. The Hugging Face on-disk cache and the
+    ``HF_HUB_OFFLINE`` / ``HF_DATASETS_OFFLINE`` environment variables are still honored by
+    :func:`datasets.load_dataset`, so this layer composes with the local cache.
+
+    Args:
+        name: The dataset name within the namespace.
+        namespace: The Hugging Face namespace/owner of the dataset.
 
     Returns:
-        features: The features for each node, if any
-        dists: The pairwise distance matrix over all nodes, if any
-        adj: The adjacency matrix over all nodes, if any
-        labels: The (classification or regression) labels for each node, if any
+        The same 4-tuple as :func:`load_hf`.
     """
-    # 1) fetch the single‑row dataset
+    # 1) fetch the single-row dataset
     ds = load_dataset(f"{namespace}/{name}")
     data = ds.get("train", ds)  # use "train" split if available, else the only split
     row = data[0]
 
-    # 2) helper to turn lists → torch (or None)
+    # 2) helper to turn lists -> torch (or None)
     def to_tensor(key: str, dtype: torch.dtype) -> torch.Tensor | None:
         vals = row.get(key, [])
         if not vals:
@@ -85,3 +94,28 @@ def load_hf(
         labels = None
 
     return feats, dists, adj, labels
+
+
+def load_hf(
+    name: str, namespace: str = "manify"
+) -> tuple[
+    Float[torch.Tensor, "n_points ..."] | None,  # features
+    Float[torch.Tensor, "n_points n_points"] | None,  # pairwise dists
+    Float[torch.Tensor, "n_points n_points"] | None,  # adjacency labels
+    Real[torch.Tensor, "n_points"] | None,  # labels
+]:
+    """Load a dataset from HuggingFace Hub at {namespace}/{name}.
+
+    Results are memoized per ``(name, namespace)`` for the lifetime of the process, so loading
+    the same dataset repeatedly (common across a test run) only resolves and decodes it once.
+    The Hugging Face on-disk cache and the ``HF_HUB_OFFLINE`` / ``HF_DATASETS_OFFLINE``
+    environment variables are honored by the underlying :func:`datasets.load_dataset` call, so
+    setting offline mode reuses the local cache without any network access.
+
+    Returns:
+        features: The features for each node, if any
+        dists: The pairwise distance matrix over all nodes, if any
+        adj: The adjacency matrix over all nodes, if any
+        labels: The (classification or regression) labels for each node, if any
+    """
+    return _load_hf_cached(name, namespace)
