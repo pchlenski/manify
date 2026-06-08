@@ -187,6 +187,16 @@ def test_regression_score_is_r2():
     assert score <= 1.0, "R^2 cannot exceed 1.0"
 
 
+def test_get_a_hat_does_not_mutate_input():
+    """get_A_hat must not modify the adjacency/distance matrix passed in."""
+    A = torch.tensor([[float("nan"), 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+    A_original = A.clone()
+    _ = get_A_hat(A)
+    assert torch.equal(A.isnan(), A_original.isnan()), "NaNs in input were overwritten"
+    finite = ~A_original.isnan()
+    assert torch.allclose(A[finite], A_original[finite]), "Input matrix was mutated"
+
+
 def test_all_link_predictors():
     print("Testing basic link predictor functionality")
     pm = ProductManifold(signature=[(-1.0, 2), (0.0, 2), (1.0, 2)])
