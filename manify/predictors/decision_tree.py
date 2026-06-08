@@ -733,7 +733,7 @@ class ProductSpaceRF(BasePredictor):
             )
 
         # Tree hyperparameters
-        tree_kwargs: Dict[str, Any] = {}
+        tree_kwargs: dict[str, Any] = {}
         self.pm = tree_kwargs["pm"] = pm
         self.task = tree_kwargs["task"] = task
         self.max_depth = tree_kwargs["max_depth"] = max_depth or -1

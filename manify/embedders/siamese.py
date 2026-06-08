@@ -88,7 +88,9 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         else:
             raise ValueError(f"Unknown reconstruction loss: {reconstruction_loss}")
 
-    def encode(self, x: Float[torch.Tensor, "batch_size n_features"]) -> Float[torch.Tensor, "batch_size n_latent"]:
+    def encode(
+        self, x: Float[torch.Tensor, "batch_size n_features"]
+    ) -> Float[torch.Tensor, "batch_size n_latent"]:
         """Encodes input data into the manifold embedding space.
 
         Takes a batch of input data and passes it through the encoder network to obtain embeddings in the manifold.
@@ -101,7 +103,9 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         """
         return self.encoder(x)
 
-    def decode(self, z: Float[torch.Tensor, "batch_size n_latent"]) -> Float[torch.Tensor, "batch_size n_features"]:
+    def decode(
+        self, z: Float[torch.Tensor, "batch_size n_latent"]
+    ) -> Float[torch.Tensor, "batch_size n_features"]:
         """Decodes manifold embeddings back to the original input space.
 
         Takes a batch of embeddings from the manifold space and passes them through
@@ -116,8 +120,10 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         return self.decoder(z)
 
     def forward(
-        self, x1: Float[torch.Tensor, "batch_size n_features"], x2: Float[torch.Tensor, "batch_size n_features"]
-    ) -> Tuple[
+        self,
+        x1: Float[torch.Tensor, "batch_size n_features"],
+        x2: Float[torch.Tensor, "batch_size n_features"],
+    ) -> tuple[
         Float[torch.Tensor, "batch_size n_latent"],
         Float[torch.Tensor, "batch_size n_latent"],
         Float[torch.Tensor, "batch_size"],
@@ -139,7 +145,9 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         """
         z1 = self.pm.expmap(self.encode(x1) @ self.pm.projection_matrix)
         z2 = self.pm.expmap(self.encode(x2) @ self.pm.projection_matrix)
-        D_hat = self.pm.manifold.dist(z1, z2)  # use manifold dist to get (batch_size, ) vector of dists
+        D_hat = self.pm.manifold.dist(
+            z1, z2
+        )  # use manifold dist to get (batch_size, ) vector of dists
         reconstructed1 = self.decode(z1)
         reconstructed2 = self.decode(z2)
         return z1, z2, D_hat, reconstructed1, reconstructed2
@@ -187,18 +195,33 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
 
         # Number of pairs and batches
         n_pairs = len(pairs)
-        n_batches_per_epoch = (n_pairs + batch_size - 1) // batch_size  # Ceiling division
-        total_iterations = (burn_in_iterations + training_iterations) * n_batches_per_epoch
+        n_batches_per_epoch = (
+            n_pairs + batch_size - 1
+        ) // batch_size  # Ceiling division
+        total_iterations = (
+            burn_in_iterations + training_iterations
+        ) * n_batches_per_epoch
 
         my_tqdm = tqdm(total=total_iterations)
 
         opt = torch.optim.Adam(
             [
-                {"params": [p for p in self.parameters() if p not in set(self.pm.parameters())], "lr": burn_in_lr},
+                {
+                    "params": [
+                        p
+                        for p in self.parameters()
+                        if p not in set(self.pm.parameters())
+                    ],
+                    "lr": burn_in_lr,
+                },
                 {"params": self.pm.parameters(), "lr": 0},
             ]
         )
-        losses: Dict[str, List[float]] = {"total": [], "reconstruction": [], "distortion": []}
+        losses: dict[str, list[float]] = {
+            "total": [],
+            "reconstruction": [],
+            "distortion": [],
+        }
 
         for epoch in range(burn_in_iterations + training_iterations):
             if epoch == burn_in_iterations:
@@ -254,10 +277,17 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
 
                 # Logging
                 if my_tqdm.n % logging_interval == 0:
-                    d = {f"r{i}": f"{logscale.item():.3f}" for i, logscale in enumerate(self.pm.parameters())}
+                    d = {
+                        f"r{i}": f"{logscale.item():.3f}"
+                        for i, logscale in enumerate(self.pm.parameters())
+                    }
                     d["L_avg"] = f"{np.mean(losses['total'][-loss_window_size:]):.3e}"
-                    d["recon_avg"] = f"{np.mean(losses['reconstruction'][-loss_window_size:]):.3e}"
-                    d["dist_avg"] = f"{np.mean(losses['distortion'][-loss_window_size:]):.3e}"
+                    d["recon_avg"] = (
+                        f"{np.mean(losses['reconstruction'][-loss_window_size:]):.3e}"
+                    )
+                    d["dist_avg"] = (
+                        f"{np.mean(losses['distortion'][-loss_window_size:]):.3e}"
+                    )
                     my_tqdm.set_postfix(d)
 
         # Final maintenance: update attributes
@@ -267,7 +297,11 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         return self
 
     def transform(
-        self, X: Float[torch.Tensor, "n_points n_features"], D: None = None, batch_size: int = 32, expmap: bool = True
+        self,
+        X: Float[torch.Tensor, "n_points n_features"],
+        D: None = None,
+        batch_size: int = 32,
+        expmap: bool = True,
     ) -> Float[torch.Tensor, "n_points n_latent"]:
         """Transforms input data into manifold embeddings.
 

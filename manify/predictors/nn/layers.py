@@ -395,7 +395,7 @@ class StereographicLayerNorm(nn.Module):
         self,
         manifold: Manifold | ProductManifold,
         embedding_dim: int,
-        curvatures: torch.Tensor["num_heads 1 1"],
+        curvatures: Float[torch.Tensor, "num_heads 1 1"],
     ):
         super().__init__()
 
