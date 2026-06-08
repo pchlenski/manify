@@ -1,4 +1,5 @@
 import torch
+from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
 
 from manify.manifolds import ProductManifold
@@ -165,8 +166,6 @@ def test_all_regressors():
 
 def test_regression_score_is_r2():
     """Regression .score() must return R^2 (higher is better), matching sklearn."""
-    from sklearn.metrics import r2_score
-
     pm = ProductManifold(signature=[(-1.0, 2), (0.0, 2), (1.0, 2)])
     X, y = pm.gaussian_mixture(
         num_points=100, num_classes=2, seed=42, task="regression"
