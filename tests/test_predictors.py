@@ -163,6 +163,30 @@ def test_all_regressors():
     print("All regressors tested successfully.")
 
 
+def test_regression_score_is_r2():
+    """Regression .score() must return R^2 (higher is better), matching sklearn."""
+    from sklearn.metrics import r2_score
+
+    pm = ProductManifold(signature=[(-1.0, 2), (0.0, 2), (1.0, 2)])
+    X, y = pm.gaussian_mixture(
+        num_points=100, num_classes=2, seed=42, task="regression"
+    )
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    model = ProductSpaceDT(pm=pm, task="regression")
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+
+    score = model.score(X_test, y_test)
+    expected = r2_score(y_test.numpy(), preds.numpy())
+    assert (
+        abs(score - expected) < 1e-5
+    ), f"score {score} should equal r2_score {expected}"
+    assert score <= 1.0, "R^2 cannot exceed 1.0"
+
+
 def test_all_link_predictors():
     print("Testing basic link predictor functionality")
     pm = ProductManifold(signature=[(-1.0, 2), (0.0, 2), (1.0, 2)])
