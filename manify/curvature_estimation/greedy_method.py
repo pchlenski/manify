@@ -38,6 +38,7 @@ def greedy_signature_selection(
 
     Returns:
         optimal_pm: Optimized product manifold with the selected signature.
+        loss_history: List of loss values at each accepted greedy step.
     """
     # Initialize variables
     signature: list[tuple[float, int]] = []

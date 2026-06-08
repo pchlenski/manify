@@ -110,11 +110,9 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         r"""Encodes input data to obtain latent means and log-variances in the manifold.
 
         This method processes input data through the encoder network to obtain parameters of the approximate posterior
-        distribution $q(z|x)$ in the product manifold space. For non-Euclidean components, the method:
-
-        1. Gets tangent space vectors and log-variances from the encoder,
-        2. Projects tangent vectors to the ambient space by adding zeros in the right places, and
-        3. Maps the ambient space vectors to the manifold using the exponential map
+        distribution $q(z|x)$ in the product manifold space. The encoder output is split into a mean (in the tangent
+        plane at the origin) and a log-variance. Projection of the tangent mean to the ambient space and the exponential
+        map onto the manifold are deferred to `forward`.
 
         Args:
             x: Input data tensor.
@@ -306,7 +304,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
             clip_grad: Whether to apply gradient clipping.
 
         Returns:
-            losses: List of loss values recorded during training.
+            self: Fitted ProductSpaceVAE instance.
         """
         if self.random_state is not None:
             torch.manual_seed(self.random_state)

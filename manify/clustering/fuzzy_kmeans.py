@@ -58,7 +58,7 @@ class RiemannianFuzzyKMeans(BaseEstimator, ClusterMixin):
 
     Args:
         n_clusters: The number of clusters to form.
-        manifold: An initialized manifold object (from manifolds.py) on which clustering will be performed.
+        pm: An initialized manifold object (from manifolds.py) on which clustering will be performed.
         m: Fuzzifier parameter. Controls the softness of the partition.
         lr: Learning rate for the optimizer.
         max_iter: Maximum number of iterations for the optimization.

@@ -325,7 +325,6 @@ class FermiDiracDecoder(nn.Module):
         Args:
             X: Node embeddings
             A_hat: Ignored (for compatibility)
-            return_pairwise: If True, return full pairwise matrix. If False, return flattened upper triangle.
 
         Returns:
             Edge probabilities (logits, apply sigmoid if needed)
