@@ -42,11 +42,30 @@ def _get_info_gains_nobatch(
     min_values_leaf: int = 1,
     eps: float = 1e-10,
 ) -> Float[torch.Tensor, "batch dims"]:
-    """Given angles matrix and labels, return information gain for each possible split.
+    r"""Given angles matrix and labels, return information gain for each possible split.
+
+    Vectorized (sort + circular window + cumulative sums) replacement for the
+    original O(n^2 * d) double loop. For each candidate row ``j`` and dimension
+    ``d`` the split sends a point left iff its angle is in the *lower* half-circle
+    ``(angles[j, d] - pi, angles[j, d]]`` -- i.e. ``_angular_greater(angles[:, d],
+    angles[j, d])`` -- which is a contiguous circular window of arc-length pi. As
+    ``theta`` sweeps the circularly-sorted angles, the window endpoints move
+    monotonically, so per-window aggregates come from cumulative sums located with
+    ``searchsorted``; everything is vectorized across dimensions with no Python
+    inner loop. Results are scattered back to the *original* row order, so the
+    returned ``ig`` has the identical ``[n_rows, n_dims]`` layout (indexed by
+    original row ``j`` and dim ``d``) as the loop, and downstream ``ig.argmax()``
+    picks the same element.
+
+    For GINI the per-window aggregates are integer class counts, so the output is
+    bit-identical to the loop. For MSE the window variance is computed as
+    ``sumsq - sum**2 / n`` (algebraically equal to the loop's ``sum((x-mean)**2)``
+    but not float-bit-identical; validated via ``allclose`` and against sklearn).
 
     Args:
         angles: (batch, dims) tensor of angles
-        labels: (query_batch, n_classes) tensor of one-hot labels
+        labels: (query_batch, n_classes) tensor of one-hot labels (gini) or
+            (query_batch,) tensor of regression targets (mse)
         criterion: impurity function used for information gain computation
         min_values_leaf: minimum number of values in a leaf node
         eps: small number to prevent division by zero
@@ -54,26 +73,82 @@ def _get_info_gains_nobatch(
     Outputs:
         ig: (query_batch, dims) tensor of information gains
     """
-    # Matrix-multiply to get counts of labels in left and right splits
+    n_rows, n_dims = angles.shape
+
+    # Sort each dimension independently; `order[:, d]` gives original row indices.
+    order = torch.argsort(angles, dim=0)  # [n_rows, n_dims]
+    sorted_ang = torch.gather(angles, 0, order)  # [n_rows, n_dims], ascending per dim
+    sorted_ang_t = sorted_ang.T.contiguous()  # [n_dims, n_rows] for searchsorted
+
+    def _circular_window_sums(
+        values: Float[torch.Tensor, "n_rows ..."],
+    ) -> Float[torch.Tensor, "n_rows n_dims ..."]:
+        r"""Per-candidate sums of `values` over the half-circle window.
+
+        For query ``theta = sorted_ang[i, d]`` the positive set is
+        ``phi in (theta - pi, theta]`` on the circle. Counting on the single
+        sorted period: the window is the union of the non-wrapped arc
+        ``(theta - pi, theta]`` and the wrapped tail ``phi > theta + pi``. Both
+        endpoints are located by value with ``searchsorted`` (``side='right'`` so
+        all duplicates of ``theta`` at the inclusive boundary are counted),
+        matching ``_angular_greater``'s tie handling exactly. Returns aggregates
+        indexed by the *sorted* candidate position.
+        """
+        # values gathered into sorted order, per dim: [n_rows, n_dims, *feat]
+        feat_shape = values.shape[1:]
+        order_exp = order.reshape(n_rows, n_dims, *([1] * len(feat_shape))).expand(n_rows, n_dims, *feat_shape)
+        sorted_vals = torch.gather(values.unsqueeze(1).expand(n_rows, n_dims, *feat_shape), 0, order_exp)
+
+        # prefix[k] = sum of first k sorted values; prefix[n_rows] = total
+        prefix = torch.cat(
+            [
+                torch.zeros(
+                    1,
+                    n_dims,
+                    *feat_shape,
+                    device=values.device,
+                    dtype=sorted_vals.dtype,
+                ),
+                sorted_vals.cumsum(0),
+            ],
+            dim=0,
+        )  # [n_rows + 1, n_dims, *feat]
+        total = prefix[n_rows]  # [n_dims, *feat]
+
+        def _cum_le(
+            x: Float[torch.Tensor, "n_rows n_dims"],
+        ) -> Float[torch.Tensor, "n_rows n_dims ..."]:
+            # number of sorted angles <= x, then index into prefix sums
+            idx = torch.searchsorted(sorted_ang_t, x.T.contiguous(), side="right").T  # [n_rows, n_dims]
+            idx_exp = idx.reshape(n_rows, n_dims, *([1] * len(feat_shape))).expand(n_rows, n_dims, *feat_shape)
+            return torch.gather(prefix, 0, idx_exp)
+
+        theta = sorted_ang  # [n_rows, n_dims]
+        main = _cum_le(theta) - _cum_le(theta - torch.pi)  # phi in (theta - pi, theta]
+        wrap = total.unsqueeze(0) - _cum_le(theta + torch.pi)  # phi > theta + pi
+        return main + wrap
+
     if criterion == "gini":
-        pos_labels = torch.zeros((angles.shape[0], angles.shape[1], labels.shape[1]), device=angles.device)
-        neg_labels = torch.zeros((angles.shape[0], angles.shape[1], labels.shape[1]), device=angles.device)
+        # Per-window class counts (integer-valued -> bit-exact with the loop).
+        pos_sorted = _circular_window_sums(labels)  # [n_rows, n_dims, n_classes]
+        pos_counts = pos_sorted.sum(dim=-1)  # [n_rows, n_dims]
+        class_totals = labels.sum(dim=0)  # [n_classes]
+        neg_sorted = class_totals - pos_sorted
+        neg_counts = labels.shape[0] - pos_counts
 
-        for d in range(angles.shape[1]):
-            for j in range(0, angles.shape[0]):
-                mask = _angular_greater(angles[:, d], angles[j, d])
+        # Scatter back to original row order.
+        pos_labels = torch.zeros((n_rows, n_dims, labels.shape[1]), device=angles.device)
+        neg_labels = torch.zeros((n_rows, n_dims, labels.shape[1]), device=angles.device)
+        order_c = order.unsqueeze(-1).expand(n_rows, n_dims, labels.shape[1])
+        pos_labels.scatter_(0, order_c, pos_sorted)
+        neg_labels.scatter_(0, order_c, neg_sorted)
+        n_pos = torch.zeros((n_rows, n_dims), device=angles.device)
+        n_neg = torch.zeros((n_rows, n_dims), device=angles.device)
+        n_pos.scatter_(0, order, pos_counts)
+        n_neg.scatter_(0, order, neg_counts)
 
-                # Expanding the labels to match the broadcasting needs of the mask
-                pos_labels_entry = mask.float() * labels  # [batch_size, labels.shape[1]]
-                neg_labels_entry = ~mask * labels  # [batch_size, labels.shape[1]]
-
-                # Assign the calculated values to the respective positions in the final tensors
-                pos_labels[j, d, :] = pos_labels_entry.sum(dim=0)
-                neg_labels[j, d, :] = neg_labels_entry.sum(dim=0)
-
-        # Total counts are sums of label counts
-        n_pos = pos_labels.sum(dim=-1) + eps
-        n_neg = neg_labels.sum(dim=-1) + eps
+        n_pos = n_pos + eps
+        n_neg = n_neg + eps
         n_total = n_pos + n_neg
 
         # Probabilities are label counts divided by total counts, when Gini is used
@@ -88,21 +163,39 @@ def _get_info_gains_nobatch(
 
     # For MSE, use the mean of the regression labels to compute MSE (i.e. look at variance)
     elif criterion == "mse":
-        n_rows, n_dims = angles.shape
+        # Per-window sum, sum-of-squares and count via cumulative sums.
+        pos_sum_sorted = _circular_window_sums(labels)  # [n_rows, n_dims]
+        pos_sumsq_sorted = _circular_window_sums(labels**2)  # [n_rows, n_dims]
+        ones = torch.ones_like(labels)
+        pos_count_sorted = _circular_window_sums(ones)  # [n_rows, n_dims]
+
+        total_sum = labels.sum()
+        total_sumsq = (labels**2).sum()
+        neg_sum_sorted = total_sum - pos_sum_sorted
+        neg_sumsq_sorted = total_sumsq - pos_sumsq_sorted
+        neg_count_sorted = labels.shape[0] - pos_count_sorted
+
+        # Scatter back to original row order.
         n_pos = torch.zeros((n_rows, n_dims), device=angles.device)
         n_neg = torch.zeros((n_rows, n_dims), device=angles.device)
-        ss_pos = torch.zeros((n_rows, n_dims), device=angles.device)
-        ss_neg = torch.zeros((n_rows, n_dims), device=angles.device)
+        pos_sum = torch.zeros((n_rows, n_dims), device=angles.device)
+        neg_sum = torch.zeros((n_rows, n_dims), device=angles.device)
+        pos_sumsq = torch.zeros((n_rows, n_dims), device=angles.device)
+        neg_sumsq = torch.zeros((n_rows, n_dims), device=angles.device)
+        n_pos.scatter_(0, order, pos_count_sorted)
+        n_neg.scatter_(0, order, neg_count_sorted)
+        pos_sum.scatter_(0, order, pos_sum_sorted)
+        neg_sum.scatter_(0, order, neg_sum_sorted)
+        pos_sumsq.scatter_(0, order, pos_sumsq_sorted)
+        neg_sumsq.scatter_(0, order, neg_sumsq_sorted)
 
-        for d in range(n_dims):
-            for j in range(n_rows):
-                mask = _angular_greater(angles[:, d], angles[j, d]).flatten()
-                pos, neg = labels[mask], labels[~mask]
-                n_pos[j, d], n_neg[j, d] = pos.shape[0], neg.shape[0]
-                if pos.shape[0] > 0:
-                    ss_pos[j, d] = ((pos - pos.mean()) ** 2).sum()
-                if neg.shape[0] > 0:
-                    ss_neg[j, d] = ((neg - neg.mean()) ** 2).sum()
+        # Sum of squared deviations: sumsq - sum^2 / n. Guard the empty-group case
+        # (n == 0) against a 0/0 by clamping the divisor, then zero those entries
+        # (the loop left ss = 0 for empty groups; they are invalidated below anyway).
+        safe_n_pos = n_pos.clamp(min=1.0)
+        safe_n_neg = n_neg.clamp(min=1.0)
+        ss_pos = torch.where(n_pos > 0, pos_sumsq - pos_sum**2 / safe_n_pos, torch.zeros_like(pos_sumsq))
+        ss_neg = torch.where(n_neg > 0, neg_sumsq - neg_sum**2 / safe_n_neg, torch.zeros_like(neg_sumsq))
 
         n_pos = n_pos + eps
         n_neg = n_neg + eps
