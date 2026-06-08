@@ -3,7 +3,10 @@
 Points are always built via ``pm.stereographic(X)`` (never ``pm.sample`` on a stereographic
 manifold, which crashes). Tests cover: smoke/shape, on-manifold validity, permutation equivariance,
 masking (an edge that is masked out cannot let one node influence another), gradient finiteness, the
-curvature -> 0 Euclidean limit, and determinism under a fixed seed.
+curvature -> 0 Euclidean limit, determinism under a fixed seed, and -- crucially -- that the
+aggregation is the gyrovector Einstein midpoint (it differs from the Euclidean mean of the value
+points at finite curvature and converges to it as curvature -> 0), guarding against a tangent-space
+/ Euclidean-mean shortcut.
 """
 
 import torch
@@ -123,24 +126,34 @@ def test_gradient_finiteness():
 
 
 def test_kappa_to_zero_euclidean_limit():
-    """As curvature -> 0 the block approaches a plain Euclidean linear-attention block."""
+    """As curvature -> 0 (input pm AND per-head curvatures) the block approaches Euclidean.
+
+    The faithful block reduces to a Euclidean linear-attention transformer only when BOTH the input
+    manifold and the learnable per-head curvatures vanish; we drive both to zero together.
+    """
     torch.manual_seed(6)
     X = torch.randn(6, 4) * 0.1
 
-    # Euclidean reference (curvature 0): logmap0/expmap0 are identities.
+    # Euclidean reference: input curvature 0 and per-head curvatures 0.
     pm0 = ProductManifold(signature=[(0.0, 4)], stereographic=True)
-    block0 = StereographicTransformer(pm0, num_heads=2, dim=4, head_dim=3, use_layer_norm=False).eval()
+    block0 = StereographicTransformer(
+        pm0, num_heads=2, dim=4, head_dim=3, use_layer_norm=False, init_curvatures=[0.0, 0.0]
+    ).eval()
     with torch.no_grad():
         out0 = block0(X)
     assert pm0.manifold.check_point(out0)
 
-    # Small-curvature manifolds with identical weights should approach the Euclidean output.
+    # Small-curvature manifolds (and per-head curvatures) with identical weights should converge.
     prev = None
     for eps in (1e-1, 1e-2, 1e-3):
         pm_eps = ProductManifold(signature=[(-eps, 2), (eps, 2)], stereographic=True)
-        block_eps = StereographicTransformer(pm_eps, num_heads=2, dim=4, head_dim=3, use_layer_norm=False).eval()
-        block_eps.load_state_dict(block0.state_dict())
+        block_eps = StereographicTransformer(
+            pm_eps, num_heads=2, dim=4, head_dim=3, use_layer_norm=False, init_curvatures=[-eps, eps]
+        ).eval()
+        # Copy Euclidean weights, then set the per-head curvatures to +/- eps.
+        block_eps.load_state_dict(block0.state_dict(), strict=False)
         with torch.no_grad():
+            block_eps.mha.curvatures.copy_(torch.tensor([-eps, eps]))
             out_eps = block_eps(X)
         err = (out_eps - out0).abs().max().item()
         assert torch.isfinite(out_eps).all() and out_eps.shape == out0.shape
@@ -149,6 +162,47 @@ def test_kappa_to_zero_euclidean_limit():
         prev = err
     # At the smallest curvature the block is close to Euclidean (loose tolerance).
     assert prev < 1e-2, f"kappa->0 limit too far from Euclidean reference: {prev}"
+
+
+def test_aggregation_is_einstein_midpoint_not_euclidean_mean():
+    """The aggregation is the gyrovector Einstein midpoint, NOT the Euclidean mean of values.
+
+    With zero queries/keys (uniform attention weights) the attention output is the Einstein midpoint
+    of the value points. At finite curvature this must DIFFER from the arithmetic mean of the value
+    points, and it must converge to that mean as curvature -> 0. This is the test that catches a
+    tangent-space / Euclidean-mean shortcut.
+    """
+    from geoopt.manifolds.stereographic import math as smath
+
+    torch.manual_seed(11)
+    n_heads, n, head_dim = 1, 6, 3
+    attn = GeometricLinearizedAttention(num_heads=n_heads, head_dim=head_dim)
+    # Uniform weights: phi(elu(0)+1)=1 everywhere -> equal attention over all values.
+    Q = torch.zeros(n_heads, n, head_dim)
+    K = torch.zeros(n_heads, n, head_dim)
+
+    prev_gap = None
+    finite_curvature_gap = None
+    for kv in (1.0, 1e-1, 1e-2, 1e-3, 1e-4):
+        k = torch.full((n_heads, 1, 1), float(kv))
+        V = smath.project(torch.randn(n_heads, n, head_dim) * 0.3, k=k)
+        with torch.no_grad():
+            out = attn(Q, K, V, curvatures=k, mask=torch.ones(n, n))
+        # Every query gets the same (uniform) midpoint; compare against the Euclidean mean.
+        midpoint = out[0, 0]
+        euclidean_mean = V[0].mean(dim=0)
+        gap = (midpoint - euclidean_mean).norm().item()
+        if kv == 1.0:
+            finite_curvature_gap = gap
+        if prev_gap is not None:
+            assert gap < prev_gap, "Einstein midpoint should approach the Euclidean mean as kappa -> 0"
+        prev_gap = gap
+
+    assert finite_curvature_gap is not None and finite_curvature_gap > 1e-3, (
+        "At finite curvature the Einstein midpoint must differ from the Euclidean mean "
+        f"(got gap={finite_curvature_gap})"
+    )
+    assert prev_gap < 1e-3, f"Einstein midpoint should converge to the Euclidean mean as kappa->0 (got {prev_gap})"
 
 
 def test_determinism_fixed_seed():
@@ -168,14 +222,51 @@ def test_determinism_fixed_seed():
 
 
 def test_geometric_linearized_attention_full_matches_masked():
-    """Full-attention fast path equals the all-ones masked path (same kernel attention)."""
+    """The kernelized full-attention path equals the all-ones masked path exactly."""
+    from geoopt.manifolds.stereographic import math as smath
+
     torch.manual_seed(8)
     n_heads, n, head_dim = 2, 5, 3
-    Q = torch.randn(n_heads, n, head_dim)
-    K = torch.randn(n_heads, n, head_dim)
-    V = torch.randn(n_heads, n, head_dim)
+    k = torch.tensor([-1.0, 1.0]).view(n_heads, 1, 1)
+    V = smath.project(torch.randn(n_heads, n, head_dim) * 0.2, k=k)
+    Q = torch.randn(n_heads, n, head_dim) * 0.2
+    K = torch.randn(n_heads, n, head_dim) * 0.2
 
     attn = GeometricLinearizedAttention(num_heads=n_heads, head_dim=head_dim)
-    out_full = attn(Q, K, V, None)
-    out_ones = attn(Q, K, V, torch.ones(n, n))
+    out_full = attn(Q, K, V, curvatures=k, mask=None)
+    out_ones = attn(Q, K, V, curvatures=k, mask=torch.ones(n, n))
     assert torch.allclose(out_full, out_ones, atol=1e-5), "None mask should equal an all-ones mask"
+
+
+def test_geometric_linearized_attention_matches_brute_force_midpoint():
+    """The kernelized aggregation equals a brute-force Einstein-midpoint computation."""
+    from geoopt.manifolds.stereographic import math as smath
+
+    torch.manual_seed(9)
+    n_heads, n, head_dim = 1, 4, 3
+    k = torch.tensor([1.0]).view(n_heads, 1, 1)
+    V = smath.project(torch.randn(n_heads, n, head_dim) * 0.2, k=k)
+    Q = torch.randn(n_heads, n, head_dim) * 0.2
+    K = torch.randn(n_heads, n, head_dim) * 0.2
+
+    attn = GeometricLinearizedAttention(num_heads=n_heads, head_dim=head_dim)
+    with torch.no_grad():
+        out = attn(Q, K, V, curvatures=k, mask=torch.ones(n, n))
+
+    # Brute-force Einstein midpoint (Eq 7).
+    q_tilde = smath.parallel_transport0back(V, Q, k=k)
+    k_tilde = smath.parallel_transport0back(V, K, k=k)
+    phi_q = torch.nn.functional.elu(q_tilde) + 1
+    phi_k = torch.nn.functional.elu(k_tilde) + 1
+    alpha = torch.einsum("hnd,hmd->hnm", phi_q, phi_k)  # [H, N, N]
+    lam = smath.lambda_x(x=V, k=k, keepdim=True, dim=-1)  # [H, N, 1]
+    out_bf = torch.zeros(n_heads, n, head_dim)
+    for i in range(n):
+        denom = (alpha[0, i] * (lam[0, :, 0] - 1)).sum()
+        coef = alpha[0, i] * lam[0, :, 0] / denom
+        out_bf[0, i] = (coef[:, None] * V[0]).sum(0)
+    out_bf = smath.project(out_bf, k=k)
+    out_bf = smath.mobius_scalar_mul(torch.tensor(0.5), out_bf, k=k, dim=-1)
+    out_bf = smath.project(out_bf, k=k)
+
+    assert torch.allclose(out, out_bf, atol=1e-5), "Kernelized aggregation must match brute-force Einstein midpoint"

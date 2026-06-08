@@ -512,9 +512,12 @@ def benchmark(
             assert isinstance(X_test_stereo, torch.Tensor)
             # head_dim must divide pm.dim across heads; fall back to 1 head for tiny manifolds.
             n_heads = 2 if pm_stereo.dim >= 2 else 1
+            # The transformer block is attention + residual; it needs at least a couple of blocks to
+            # be competitive (a single block barely moves signal past the residual), unlike a GCN conv.
+            n_layers = max(2, kappa_gcn_layers)
             kappa_transformer = KappaTransformer(
                 pm=pm_stereo,
-                num_layers=kappa_gcn_layers,
+                num_layers=n_layers,
                 num_heads=n_heads,
                 task=task,
                 output_dim=nn_outdim,  # type: ignore
