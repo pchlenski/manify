@@ -165,7 +165,30 @@ def _get_info_gains_nobatch(
 
     # For MSE, use the mean of the regression labels to compute MSE (i.e. look at variance)
     elif criterion == "mse":
-        raise NotImplementedError("MSE not implemented for no-batch case")
+        n_rows, n_dims = angles.shape
+        n_pos = torch.zeros((n_rows, n_dims), device=angles.device)
+        n_neg = torch.zeros((n_rows, n_dims), device=angles.device)
+        ss_pos = torch.zeros((n_rows, n_dims), device=angles.device)
+        ss_neg = torch.zeros((n_rows, n_dims), device=angles.device)
+
+        for d in range(n_dims):
+            for j in range(n_rows):
+                mask = _angular_greater(angles[:, d], angles[j, d]).flatten()
+                pos, neg = labels[mask], labels[~mask]
+                n_pos[j, d], n_neg[j, d] = pos.shape[0], neg.shape[0]
+                if pos.shape[0] > 0:
+                    ss_pos[j, d] = ((pos - pos.mean()) ** 2).sum()
+                if neg.shape[0] > 0:
+                    ss_neg[j, d] = ((neg - neg.mean()) ** 2).sum()
+
+        n_pos = n_pos + eps
+        n_neg = n_neg + eps
+        n_total = n_pos + n_neg
+
+        # Per-group MSE (sum of squared deviations / group size); total is the variance
+        gini_pos = ss_pos / n_pos
+        gini_neg = ss_neg / n_neg
+        gini_total = ((labels - labels.mean()) ** 2).mean()
     else:
         raise ValueError(f"Invalid criterion: {criterion}")
 
