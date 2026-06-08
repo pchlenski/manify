@@ -363,3 +363,16 @@ def test_random_forest_max_features():
     rf_all = ProductSpaceRF(pm=pm, max_features="none", n_estimators=2)
     rf_all.fit(X_train, y_train)
     assert total_angles == rf_all.trees[0].permutations.shape[0]
+
+
+def test_sphere_train_consistency():
+    """Full-depth DT must reproduce its own training labels on the sphere.
+
+    Guards against a split threshold that routes inference differently from the
+    training partition on spherical (circular-angle) features.
+    """
+    pm = ProductManifold(signature=[(1.0, 3)])
+    X, y = pm.gaussian_mixture(num_points=80, num_classes=3, seed=0)
+    dt = ProductSpaceDT(pm=pm, task="classification", max_depth=None, min_samples_split=2).fit(X, y)
+    acc = (dt.predict(X) == y).float().mean().item()
+    assert acc == 1.0, f"train accuracy {acc} < 1.0: split misroutes its own training data"
