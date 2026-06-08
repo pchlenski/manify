@@ -19,8 +19,7 @@ from ._midpoint import midpoint
 
 
 def _angular_greater(
-    queries: Float[torch.Tensor, "query_batch ..."],
-    keys: Float[torch.Tensor, "key_batch ..."],
+    queries: Float[torch.Tensor, "query_batch ..."], keys: Float[torch.Tensor, "key_batch ..."]
 ) -> Bool[torch.Tensor, "query_batch key_batch ..."]:
     r"""Given an angle $\theta$, check whether a tensor of inputs is in $[\theta, \theta + \pi)$.
 
@@ -37,7 +36,7 @@ def _angular_greater(
 
 def _get_info_gains(
     comparisons: Float[torch.Tensor, "query_batch dims key_batch"],
-    labels: (Float[torch.Tensor, "query_batch n_classes"] | Float[torch.Tensor, "query_batch"]),
+    labels: Float[torch.Tensor, "query_batch n_classes"] | Float[torch.Tensor, "query_batch"],
     criterion: Literal["gini", "mse"] = "gini",
     min_values_leaf: int = 1,
     eps: float = 1e-10,
@@ -186,7 +185,7 @@ def _get_split(
     mask: Bool[torch.Tensor, "query_batch"],
     angles: Float[torch.Tensor, "query_batch dims"],
     comparisons: Float[torch.Tensor, "query_batch dims key_batch"],
-    labels: (Float[torch.Tensor, "query_batch n_classes"] | Float[torch.Tensor, "query_batch"]),
+    labels: Float[torch.Tensor, "query_batch n_classes"] | Float[torch.Tensor, "query_batch"],
 ) -> tuple[
     tuple[
         Float[torch.Tensor, "query_batch_neg dims"],
@@ -324,9 +323,7 @@ class ProductSpaceDT(BasePredictor):
         self.signature: list[tuple[float, int]] = pm.signature  # The signature of the manifold
 
     def _preprocess(
-        self,
-        X: Float[torch.Tensor, "batch ambient_dim"],
-        y: Real[torch.Tensor, "batch"] | None = None,
+        self, X: Float[torch.Tensor, "batch ambient_dim"], y: Real[torch.Tensor, "batch"] | None = None
     ) -> tuple[
         Float[torch.Tensor, "batch intrinsic_dim"],  # angles
         Float[torch.Tensor, "batch n_classes"] | Float[torch.Tensor, "batch"] | Float[torch.Tensor, "0"],  # labels
@@ -488,11 +485,7 @@ class ProductSpaceDT(BasePredictor):
         return n, d, m
 
     @torch.no_grad()  # type: ignore
-    def fit(
-        self,
-        X: Float[torch.Tensor, "batch ambient_dim"],
-        y: Real[torch.Tensor, "batch"],
-    ) -> ProductSpaceDT:
+    def fit(self, X: Float[torch.Tensor, "batch ambient_dim"], y: Real[torch.Tensor, "batch"]) -> ProductSpaceDT:
         """Reworked fit function for new version of ProductDT.
 
         Args:
@@ -510,12 +503,7 @@ class ProductSpaceDT(BasePredictor):
         angles, labels, comparisons_reshaped = self._preprocess(X=X, y=y)
 
         # Fit node
-        self.tree = self._fit_node(
-            angles=angles,
-            labels=labels,
-            comparisons=comparisons_reshaped,
-            depth=self.max_depth,
-        )
+        self.tree = self._fit_node(angles=angles, labels=labels, comparisons=comparisons_reshaped, depth=self.max_depth)
 
         self.is_fitted_ = True  # Mark the model as fitted
         return self
@@ -552,9 +540,7 @@ class ProductSpaceDT(BasePredictor):
             node: The decision node created from the fitting process.
         """
 
-        def _halt(
-            labels: (Float[torch.Tensor, "batch n_classes"] | Real[torch.Tensor, "batch"]),
-        ) -> _DecisionNode:
+        def _halt(labels: Float[torch.Tensor, "batch n_classes"] | Real[torch.Tensor, "batch"]) -> _DecisionNode:
             """Create a leaf node when halting conditions are met."""
             probs, value = self._leaf_values(labels)
             node = _DecisionNode(value=value.item(), probs=probs)
@@ -590,26 +576,13 @@ class ProductSpaceDT(BasePredictor):
         self.nodes.append(node)
 
         # Do left and right recursion after appending node to self.nodes (ensures order of self.nodes is correct)
-        node.left = self._fit_node(
-            angles=angles_neg,
-            labels=labels_neg,
-            comparisons=comparisons_neg,
-            depth=depth - 1,
-        )
-        node.right = self._fit_node(
-            angles=angles_pos,
-            labels=labels_pos,
-            comparisons=comparisons_pos,
-            depth=depth - 1,
-        )
+        node.left = self._fit_node(angles=angles_neg, labels=labels_neg, comparisons=comparisons_neg, depth=depth - 1)
+        node.right = self._fit_node(angles=angles_pos, labels=labels_pos, comparisons=comparisons_pos, depth=depth - 1)
         return node
 
     def _leaf_values(
         self, y: Float[torch.Tensor, "batch n_classes"] | Float[torch.Tensor, "batch"]
-    ) -> tuple[
-        Float[torch.Tensor, "n_classes"] | Float[torch.Tensor, ""],
-        Real[torch.Tensor, ""],
-    ]:
+    ) -> tuple[Float[torch.Tensor, "n_classes"] | Float[torch.Tensor, ""], Real[torch.Tensor, ""]]:
         """Get majority class and class probabilities."""
         if self.task == "regression":
             return y.mean(), y.mean()
@@ -620,8 +593,7 @@ class ProductSpaceDT(BasePredictor):
     def _left(self, angles_row: Float[torch.Tensor, "intrinsic_dim"], node: _DecisionNode) -> bool:
         """Boolean: Go left? Works on a preprocessed input vector."""
         return _angular_greater(  # type:ignore
-            torch.tensor(node.theta, device=angles_row.device).flatten(),
-            angles_row[node.feature].flatten(),
+            torch.tensor(node.theta, device=angles_row.device).flatten(), angles_row[node.feature].flatten()
         ).item()
 
     def _traverse(self, x: Float[torch.Tensor, "intrinsic_dim"], node: _DecisionNode) -> _DecisionNode:
@@ -731,11 +703,7 @@ class ProductSpaceRF(BasePredictor):
         return idx_sample, idx_dim
 
     @torch.no_grad()  # type: ignore
-    def fit(
-        self,
-        X: Float[torch.Tensor, "batch ambient_dim"],
-        y: Real[torch.Tensor, "batch"],
-    ) -> ProductSpaceRF:
+    def fit(self, X: Float[torch.Tensor, "batch ambient_dim"], y: Real[torch.Tensor, "batch"]) -> ProductSpaceRF:
         """Preprocess and fit an ensemble of trees on subsampled data."""
         # Pre-preprocessing step: aggregate special dimensions
         if self.use_special_dims:

@@ -24,9 +24,7 @@ else:
 
 
 def get_A_hat(
-    A: Float[torch.Tensor, "n_nodes n_nodes"],
-    make_symmetric: bool = True,
-    add_self_loops: bool = True,
+    A: Float[torch.Tensor, "n_nodes n_nodes"], make_symmetric: bool = True, add_self_loops: bool = True
 ) -> Float[torch.Tensor, "n_nodes n_nodes"]:
     """Normalize adjacency matrix.
 
@@ -247,9 +245,7 @@ class KappaGCN(BasePredictor, torch.nn.Module):
         return self
 
     def predict_proba(
-        self,
-        X: Float[torch.Tensor, "n_nodes dim"],
-        A: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
+        self, X: Float[torch.Tensor, "n_nodes dim"], A: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Real[torch.Tensor, "n_nodes n_classes"] | Real[torch.Tensor, "n_nodes"]:
         """Predict class probabilities using the trained Kappa GCN.
 

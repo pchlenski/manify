@@ -116,9 +116,7 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         return self.decoder(z)
 
     def forward(
-        self,
-        x1: Float[torch.Tensor, "batch_size n_features"],
-        x2: Float[torch.Tensor, "batch_size n_features"],
+        self, x1: Float[torch.Tensor, "batch_size n_features"], x2: Float[torch.Tensor, "batch_size n_features"]
     ) -> tuple[
         Float[torch.Tensor, "batch_size n_latent"],
         Float[torch.Tensor, "batch_size n_latent"],
@@ -196,18 +194,11 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
 
         opt = torch.optim.Adam(
             [
-                {
-                    "params": [p for p in self.parameters() if p not in set(self.pm.parameters())],
-                    "lr": burn_in_lr,
-                },
+                {"params": [p for p in self.parameters() if p not in set(self.pm.parameters())], "lr": burn_in_lr},
                 {"params": self.pm.parameters(), "lr": 0},
             ]
         )
-        losses: dict[str, list[float]] = {
-            "total": [],
-            "reconstruction": [],
-            "distortion": [],
-        }
+        losses: dict[str, list[float]] = {"total": [], "reconstruction": [], "distortion": []}
 
         for epoch in range(burn_in_iterations + training_iterations):
             if epoch == burn_in_iterations:
@@ -276,11 +267,7 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         return self
 
     def transform(
-        self,
-        X: Float[torch.Tensor, "n_points n_features"],
-        D: None = None,
-        batch_size: int = 32,
-        expmap: bool = True,
+        self, X: Float[torch.Tensor, "n_points n_features"], D: None = None, batch_size: int = 32, expmap: bool = True
     ) -> Float[torch.Tensor, "n_points n_latent"]:
         """Transforms input data into manifold embeddings.
 

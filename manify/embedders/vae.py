@@ -106,10 +106,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
 
     def encode(
         self, x: Float[torch.Tensor, "batch_size n_features"]
-    ) -> tuple[
-        Float[torch.Tensor, "batch_size n_latent"],
-        Float[torch.Tensor, "batch_size n_latent"],
-    ]:
+    ) -> tuple[Float[torch.Tensor, "batch_size n_latent"], Float[torch.Tensor, "batch_size n_latent"]]:
         r"""Encodes input data to obtain latent means and log-variances in the manifold.
 
         This method processes input data through the encoder network to obtain parameters of the approximate posterior
@@ -317,10 +314,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         my_tqdm = tqdm(total=(burn_in_iterations + training_iterations) * len(X))
         opt = torch.optim.Adam(
             [
-                {
-                    "params": [p for p in self.parameters() if p not in set(self.pm.parameters())],
-                    "lr": burn_in_lr,
-                },
+                {"params": [p for p in self.parameters() if p not in set(self.pm.parameters())], "lr": burn_in_lr},
                 {"params": self.pm.parameters(), "lr": 0},
             ]
         )
@@ -371,11 +365,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         return self
 
     def transform(
-        self,
-        X: Float[torch.Tensor, "n_points n_features"],
-        D: None = None,
-        batch_size: int = 32,
-        expmap: bool = True,
+        self, X: Float[torch.Tensor, "n_points n_features"], D: None = None, batch_size: int = 32, expmap: bool = True
     ) -> Float[torch.Tensor, "n_points embedding_dim"]:
         """Transform data using the trained VAE. Outputs means of the variational distribution.
 

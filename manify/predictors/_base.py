@@ -63,8 +63,7 @@ class BasePredictor(BaseEstimator, ABC):
             raise ValueError(f"Unknown task type: {task}")
 
     def _store_classes(
-        self,
-        y: Float[torch.Tensor, "n_points n_classes"] | Float[torch.Tensor, "n_points"],
+        self, y: Float[torch.Tensor, "n_points n_classes"] | Float[torch.Tensor, "n_points"]
     ) -> Float[torch.Tensor, "n_points"]:
         """Store unique classes and return relabeled y for classification tasks."""
         if self.task == "classification":
@@ -149,6 +148,7 @@ class BasePredictor(BaseEstimator, ABC):
 
         if sample_weight is None:
             sample_weight = torch.ones_like(predictions, dtype=torch.float32)
+
         total_weight = sample_weight.sum()
 
         if self.task in ("classification", "link_prediction"):
