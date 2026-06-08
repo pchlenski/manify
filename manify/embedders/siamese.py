@@ -117,7 +117,7 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
 
     def forward(
         self, x1: Float[torch.Tensor, "batch_size n_features"], x2: Float[torch.Tensor, "batch_size n_features"]
-    ) -> Tuple[
+    ) -> tuple[
         Float[torch.Tensor, "batch_size n_latent"],
         Float[torch.Tensor, "batch_size n_latent"],
         Float[torch.Tensor, "batch_size"],
@@ -198,7 +198,7 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
                 {"params": self.pm.parameters(), "lr": 0},
             ]
         )
-        losses: Dict[str, List[float]] = {"total": [], "reconstruction": [], "distortion": []}
+        losses: dict[str, list[float]] = {"total": [], "reconstruction": [], "distortion": []}
 
         for epoch in range(burn_in_iterations + training_iterations):
             if epoch == burn_in_iterations:

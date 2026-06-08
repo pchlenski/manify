@@ -630,7 +630,7 @@ class ProductSpaceRF(BasePredictor):
         min_impurity_decrease: float = 0.0,
         ablate_midpoints: bool = False,
         n_estimators: int = 100,
-        max_features: Literal["sqrt", "log2", "none"] = "sqrt",
+        max_features: int | Literal["sqrt", "log2", "none"] = "sqrt",
         max_samples: float = 1.0,
         batch_size: int | None = None,
         random_state: int | None = None,
@@ -649,7 +649,7 @@ class ProductSpaceRF(BasePredictor):
             )
 
         # Tree hyperparameters
-        tree_kwargs: Dict[str, Any] = {}
+        tree_kwargs: dict[str, Any] = {}
         self.pm = tree_kwargs["pm"] = pm
         self.task = tree_kwargs["task"] = task
         self.max_depth = tree_kwargs["max_depth"] = max_depth or -1
@@ -685,8 +685,8 @@ class ProductSpaceRF(BasePredictor):
         self, n_rows: int, n_cols: int, n_trees: int
     ) -> tuple[Int[torch.Tensor, "n_trees n_rows"], Int[torch.Tensor, "n_trees n_cols"]]:
         # Get number of dimensions in our subsample
-        if isinstance(self.max_features, int) and self.max_features <= n_cols:
-            n_cols_sample = n_cols
+        if isinstance(self.max_features, int):
+            n_cols_sample = min(self.max_features, n_cols)
         elif self.max_features == "sqrt":
             n_cols_sample = torch.ceil(torch.tensor(n_cols**0.5)).int()
         elif self.max_features == "log2":

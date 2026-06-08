@@ -170,11 +170,13 @@ class ProductSpaceSVM(BasePredictor):
             prob = cp.Problem(cp.Minimize(-eps_var + cp.sum(zeta)), constraints)
             prob.solve(solver="SCS")
 
-            # save results
+            # save results. eps_var and b_var are length-1 cp.Variables, so their
+            # .value is a 1-element ndarray; index it before float() (numpy 2.x no
+            # longer coerces 1-element arrays to scalars implicitly).
             self.beta[cls_item] = np.ravel(beta_var.value)
             self.zeta[cls_item] = zeta.value
-            self.epsilon[cls_item] = float(eps_var.value)
-            self.b[cls_item] = float(b_var.value)
+            self.epsilon[cls_item] = float(np.ravel(eps_var.value)[0])
+            self.b[cls_item] = float(np.ravel(b_var.value)[0])
 
         # store training data
         self.X_train_ = torch.tensor(X_np, dtype=torch.float32)

@@ -1,4 +1,5 @@
 import torch
+from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
 
 from manify.manifolds import ProductManifold
@@ -116,6 +117,32 @@ def test_all_regressors():
     _test_kappa_gcn_model(kappa_gcn, X_train_stereo, X_test_stereo, y_train, y_test, pm=pm_stereo, task="regression")
 
     print("All regressors tested successfully.")
+
+
+def test_regression_score_is_r2():
+    """Regression .score() must return R^2 (higher is better), matching sklearn."""
+    pm = ProductManifold(signature=[(-1.0, 2), (0.0, 2), (1.0, 2)])
+    X, y = pm.gaussian_mixture(num_points=100, num_classes=2, seed=42, task="regression")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    model = ProductSpaceDT(pm=pm, task="regression")
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+
+    score = model.score(X_test, y_test)
+    expected = r2_score(y_test.numpy(), preds.numpy())
+    assert abs(score - expected) < 1e-5, f"score {score} should equal r2_score {expected}"
+    assert score <= 1.0, "R^2 cannot exceed 1.0"
+
+
+def test_get_a_hat_does_not_mutate_input():
+    """get_A_hat must not modify the adjacency/distance matrix passed in."""
+    A = torch.tensor([[float("nan"), 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+    A_original = A.clone()
+    _ = get_A_hat(A)
+    assert torch.equal(A.isnan(), A_original.isnan()), "NaNs in input were overwritten"
+    finite = ~A_original.isnan()
+    assert torch.allclose(A[finite], A_original[finite]), "Input matrix was mutated"
 
 
 def test_all_link_predictors():
@@ -242,3 +269,19 @@ def test_random_forest_max_features():
     assert preds.shape[0] == X_test.shape[0], "Predictions should match the number of test samples"
     assert preds.ndim == 1, "Predictions should be a 1D array"
     assert (preds == y_test).float().mean() >= 0.5, "Model did not achieve sufficient accuracy"
+
+    # max_features = int: each tree should subsample exactly that many feature columns
+    n_features_int = 3
+    rf = ProductSpaceRF(pm=pm, max_features=n_features_int, n_estimators=2)
+    rf.fit(X_train, y_train)
+    n_cols = rf.trees[0].permutations.shape[0]
+    assert n_cols == n_features_int, f"Expected {n_features_int} subsampled features, got {n_cols}"
+    assert all(tree.permutations.shape[0] == n_features_int for tree in rf.trees)
+
+    # max_features larger than the available columns should clamp to the number of columns
+    rf = ProductSpaceRF(pm=pm, max_features=10_000, n_estimators=2)
+    rf.fit(X_train, y_train)
+    total_angles = rf.trees[0].permutations.shape[0]
+    rf_all = ProductSpaceRF(pm=pm, max_features="none", n_estimators=2)
+    rf_all.fit(X_train, y_train)
+    assert total_angles == rf_all.trees[0].permutations.shape[0]

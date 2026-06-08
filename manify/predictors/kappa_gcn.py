@@ -36,8 +36,8 @@ def get_A_hat(
     Returns:
         A_hat: Normalized adjacency matrix.
     """
-    # Fix nans
-    A[torch.isnan(A)] = 0
+    # Fix nans (without mutating the caller's tensor)
+    A = torch.where(torch.isnan(A), torch.zeros_like(A), A)
 
     # Optional steps to make symmetric and add self-loops
     if make_symmetric and not torch.allclose(A, A.T):

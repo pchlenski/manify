@@ -215,7 +215,9 @@ class StereographicLogits(nn.Module):
         else:
             # Non-Euclidean case: need to do the arsinh
             dist = 2 * za / ((1 + kappa * z_k_norms**2) * a_k_norms)
-            dist = geoopt.manifolds.stereographic.math.arsin_k(dist, kappa * abs(kappa))
+            # arsin_k takes the curvature kappa directly: it scales the argument by
+            # sqrt(|kappa|) internally and multiplies the result by 1/sqrt(|kappa|).
+            dist = geoopt.manifolds.stereographic.math.arsin_k(dist, kappa)
 
             # Get the coefficients
             lambda_pks = M.manifold.lambda_x(b)  # (k,)
@@ -356,7 +358,7 @@ class StereographicLayerNorm(nn.Module):
     """
 
     def __init__(
-        self, manifold: Manifold | ProductManifold, embedding_dim: int, curvatures: torch.Tensor["num_heads 1 1"]
+        self, manifold: Manifold | ProductManifold, embedding_dim: int, curvatures: Float[torch.Tensor, "num_heads 1 1"]
     ):
         super().__init__()
 

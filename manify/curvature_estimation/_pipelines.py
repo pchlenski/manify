@@ -100,7 +100,8 @@ def predictor_pipeline(
     model_init_kwargs["task"] = task
     model = classifier(pm=pm, **model_init_kwargs)
     model.fit(X=X_train, y=y_train, **model_fit_kwargs)
-    loss = model.score(X=X_test, y=y_test)
+    score = model.score(X=X_test, y=y_test)
 
-    # For classification, we want to maximize accuracy; for regression, we minimize MSE.
-    return -loss if task == "classification" else loss
+    # model.score returns accuracy (classification) or R^2 (regression); both are
+    # higher-is-better, so negate to turn them into a loss for greedy minimization.
+    return -score

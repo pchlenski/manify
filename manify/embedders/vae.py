@@ -318,7 +318,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
                 {"params": self.pm.parameters(), "lr": 0},
             ]
         )
-        losses: Dict[str, List[float]] = {"elbo": [], "ll": [], "kl": []}
+        losses: dict[str, list[float]] = {"elbo": [], "ll": [], "kl": []}
         for epoch in range(burn_in_iterations + training_iterations):
             if epoch == burn_in_iterations:
                 opt.param_groups[0]["lr"] = lr

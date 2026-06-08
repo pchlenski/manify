@@ -9,7 +9,7 @@ import torch
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 
 if TYPE_CHECKING:
-    from beartype.typing import Literal
+    from beartype.typing import Any, Literal
     from jaxtyping import Float
 
 from ..manifolds import ProductManifold
@@ -107,7 +107,7 @@ class BasePredictor(BaseEstimator, ABC):
         """
         pass
 
-    def predict(self, X: Float[torch.Tensor, "n_points n_features"], **kwargs: dict) -> Float[torch.Tensor, "n_points"]:
+    def predict(self, X: Float[torch.Tensor, "n_points n_features"], **kwargs: Any) -> Float[torch.Tensor, "n_points"]:
         """Compute the predicted classes for the given features.
 
         Args:
@@ -131,7 +131,7 @@ class BasePredictor(BaseEstimator, ABC):
         X: Float[torch.Tensor, "n_points n_features"],
         y: Float[torch.Tensor, "n_points n_classes"] | Float[torch.Tensor, "n_points"],
         sample_weight: Float[torch.Tensor, "n_points"] | None = None,
-        **kwargs: dict,
+        **kwargs: Any,
     ) -> float:
         """Return the mean accuracy/R² score.
 
@@ -149,11 +149,16 @@ class BasePredictor(BaseEstimator, ABC):
         if sample_weight is None:
             sample_weight = torch.ones_like(predictions, dtype=torch.float32)
 
-        if self.task == "classification":
-            out = ((predictions == y).float() * sample_weight).mean().item()
-        elif self.task == "regression":
-            out = (((predictions - y) ** 2 * sample_weight).mean()).item()
-        else:  # link_prediction
-            out = ((predictions == y).float() * sample_weight).mean().item()
+        total_weight = sample_weight.sum()
+
+        if self.task in ("classification", "link_prediction"):
+            # Weighted accuracy (matches sklearn's accuracy_score with sample_weight)
+            out = ((predictions == y).float() * sample_weight).sum().item() / total_weight.item()
+        else:  # regression
+            # Weighted R^2 (matches sklearn's RegressorMixin.score: higher is better)
+            y_mean = (y * sample_weight).sum() / total_weight
+            ss_res = (sample_weight * (y - predictions) ** 2).sum()
+            ss_tot = (sample_weight * (y - y_mean) ** 2).sum()
+            out = (1.0 - ss_res / ss_tot).item() if ss_tot > 0 else 0.0
 
         return float(out)

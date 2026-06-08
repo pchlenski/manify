@@ -163,7 +163,9 @@ def benchmark(
     Returns:
         Dictionary mapping model names to their corresponding evaluation scores.
     """
-    score = score or ["accuracy", "f1-micro", "f1-macro"]
+    # Task-appropriate default scores (regression cannot use accuracy/f1).
+    if score is None:
+        score = ["mse", "rmse"] if task == "regression" else ["accuracy", "f1-micro", "f1-macro"]
     models = models or [
         "sklearn_dt",
         "sklearn_rf",
@@ -185,12 +187,6 @@ def benchmark(
         "kappa_mlr",
         "single_manifold_rf",
     ]
-
-    # Input validation on (task, score) pairing
-    if task in {"classification", "link_prediction"}:
-        assert all(s in {"accuracy", "f1-micro", "f1-macro", "time"} for s in score)
-    elif task == "regression":
-        assert all(s in {"mse", "rmse", "percent_rmse", "time"} for s in score)
 
     # Input validation on (task, score) pairing
     if task in {"classification", "link_prediction"}:
