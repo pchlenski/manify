@@ -334,13 +334,11 @@ class ProductSpaceDT(BasePredictor):
         Args:
             X: (batch, ambient_dim) tensor of coordinates
             y: (batch,) tensor of labels
-            include_special_dims: whether to include special dimensions as a new Euclidean component
 
         Outputs:
-            X: (batch, intrinsic_dim) tensor of angles
-            y: (batch, n_classes) tensor of one-hot labels
-            classes: (n_classes,) tensor of classes with original labels
-            M: (batch, intrinsic_dim, batch) tensor of comparisons
+            angles: (batch, intrinsic_dim) tensor of angles
+            labels: (batch, n_classes) tensor of one-hot labels
+            comparisons: (batch, intrinsic_dim, batch) tensor of comparisons
         """
         # Ensure X and y are tensors
         if not torch.is_tensor(X):
@@ -489,11 +487,11 @@ class ProductSpaceDT(BasePredictor):
         """Reworked fit function for new version of ProductDT.
 
         Args:
-            X: (batch, ambient_dim) tensor of trainind data (ambient coordinate representation)
+            X: (batch, ambient_dim) tensor of training data (ambient coordinate representation)
             y: (batch,) tensor of labels (integer representation)
 
         Returns:
-            None (fits tree in place)
+            self: The fitted decision tree.
         """
         # Pre-preprocessing step: aggregate special dimensions into a new Euclidean component
         if self.use_special_dims:

@@ -154,8 +154,6 @@ def benchmark(
             Defaults to None.
         A_test: Testing adjacency matrix with shape (n_samples, n_samples).
             Defaults to None.
-        hidden_dims: List of hidden layer dimensions for neural networks.
-            Defaults to None.
         epochs: Number of training epochs for iterative models. Defaults to 4000.
         lr: Learning rate for gradient-based optimization. Defaults to 1e-4.
         kappa_gcn_layers: Number of layers in GCN models. Defaults to 1.

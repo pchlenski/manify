@@ -115,7 +115,7 @@ class BasePredictor(BaseEstimator, ABC):
             **kwargs: Additional keyword arguments that get passed to `self.predict_proba()`.
 
         Returns:
-            X_proba: Predicted probabilities for the input features.
+            predictions: Predicted classes (classification/link_prediction) or values (regression).
         """
         if self.task == "regression":
             return self.predict_proba(X=X, **kwargs).squeeze(-1)

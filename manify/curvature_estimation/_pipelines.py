@@ -23,7 +23,7 @@ def distortion_pipeline(
     embedder_init_kwargs: dict[str, Any] | None = None,
     embedder_fit_kwargs: dict[str, Any] | None = None,
 ) -> float:
-    """Builds a distortion‐based pipeline function for greedy signature selection.
+    """Distortion‐based pipeline function for greedy signature selection.
 
     Args:
         pm: Product manifold to use for the pipeline.
@@ -32,8 +32,7 @@ def distortion_pipeline(
         embedder_fit_kwargs: Additional keyword arguments for fitting the embedder model.
 
     Returns:
-        A function f(signature) → loss, where signature is a list
-        of (curvature, dim) tuples.
+        The distortion loss of the embeddings learned on the given product manifold.
     """
     embedder_init_kwargs = embedder_init_kwargs or {}
     embedder_fit_kwargs = embedder_fit_kwargs or {}
@@ -64,7 +63,7 @@ def predictor_pipeline(
     model_init_kwargs: dict[str, Any] | None = None,
     model_fit_kwargs: dict[str, Any] | None = None,
 ) -> float:
-    """Builds a classifier‐based pipeline function for greedy signature selection.
+    """Classifier‐based pipeline function for greedy signature selection.
 
     Args:
         pm: Product manifold to use for the pipeline.
