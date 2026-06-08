@@ -9,7 +9,7 @@ import torch
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 
 if TYPE_CHECKING:
-    from beartype.typing import Literal
+    from beartype.typing import Any, Literal
     from jaxtyping import Float
 
 from ..manifolds import ProductManifold
@@ -111,7 +111,7 @@ class BasePredictor(BaseEstimator, ABC):
         pass
 
     def predict(
-        self, X: Float[torch.Tensor, "n_points n_features"], **kwargs: dict
+        self, X: Float[torch.Tensor, "n_points n_features"], **kwargs: Any
     ) -> Float[torch.Tensor, "n_points"]:
         """Compute the predicted classes for the given features.
 
@@ -136,7 +136,7 @@ class BasePredictor(BaseEstimator, ABC):
         X: Float[torch.Tensor, "n_points n_features"],
         y: Float[torch.Tensor, "n_points n_classes"] | Float[torch.Tensor, "n_points"],
         sample_weight: Float[torch.Tensor, "n_points"] | None = None,
-        **kwargs: dict,
+        **kwargs: Any,
     ) -> float:
         """Return the mean accuracy/R² score.
 
