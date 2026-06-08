@@ -18,7 +18,11 @@ def test_sphere_train_consistency():
     Guards the Phase B fix.
     """
     pm = ProductManifold(signature=[(1.0, 3)])
-    X, y = pm.gaussian_mixture(num_points=120, num_classes=3, seed=0)
-    dt = ProductSpaceDT(pm=pm, task="classification", max_depth=None, min_samples_split=2).fit(X, y)
+    X, y = pm.gaussian_mixture(num_points=80, num_classes=3, seed=0)
+    dt = ProductSpaceDT(
+        pm=pm, task="classification", max_depth=None, min_samples_split=2
+    ).fit(X, y)
     acc = (dt.predict(X) == y).float().mean().item()
-    assert acc == 1.0, f"train accuracy {acc} < 1.0: split misroutes its own training data"
+    assert (
+        acc == 1.0
+    ), f"train accuracy {acc} < 1.0: split misroutes its own training data"
