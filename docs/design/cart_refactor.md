@@ -202,6 +202,37 @@ memory of new vs legacy across `n_points ∈ {50, 200, 1k, 5k, 20k}`, `n_feature
 large n); record the crossover if small-n regresses. Commit the script + a results
 table.
 
+### Results (vectorized info-gain vs legacy O(n²) loop)
+
+Benchmark: `scripts/bench_cart.py`. Compares the live `ProductSpaceDT.fit`
+(vectorized info-gain: sort + circular window + cumulative sums) against the
+frozen legacy `ProductSpaceDT(batch_size=1).fit` (the O(n²) Python double loop),
+`max_depth=4`, classification, `n_features="d"`, 3 classes. Each fit runs in a
+fresh subprocess; peak memory is process peak RSS via `ru_maxrss` (the ~650 MiB
+floor is the torch/library import baseline, identical for both paths — at these
+sizes neither path allocates a large tensor on the nobatch path, so the win is
+all wall-clock). The legacy O(n²) loop is skipped past n=5000 (impractically
+slow). Measured on CPU.
+
+| signature | n_points | vec fit (s) | legacy fit (s) | speedup | vec peak (MiB) | legacy peak (MiB) |
+|---|---:|---:|---:|---:|---:|---:|
+| E^3 | 50 | 0.009 | 0.037 | 4.2x | 652.8 | 651.3 |
+| E^3 | 200 | 0.013 | 0.135 | 10.4x | 651.4 | 651.2 |
+| E^3 | 1000 | 0.019 | 0.743 | 38.3x | 652.7 | 652.9 |
+| E^3 | 5000 | 0.037 | 5.083 | 136.7x | 656.5 | 657.8 |
+| E^3 | 20000 | 0.096 | --- | n/a | 673.4 | --- |
+| H^2xS^2 | 50 | 0.010 | 0.041 | 4.2x | 659.5 | 656.6 |
+| H^2xS^2 | 200 | 0.016 | 0.176 | 11.3x | 659.3 | 659.2 |
+| H^2xS^2 | 1000 | 0.019 | 0.923 | 48.0x | 659.6 | 659.4 |
+| H^2xS^2 | 5000 | 0.044 | 7.046 | 159.5x | 661.5 | 662.9 |
+| H^2xS^2 | 20000 | 0.113 | --- | n/a | 681.6 | --- |
+
+The vectorized path is faster at **every** size — no small-n crossover (even
+n=50 is ~4x faster) — and the gap widens with n (≈137–160x at n=5000), as
+expected from O(n log n) vs O(n²). At n=20000 the vectorized fit completes in
+~0.1 s while the legacy loop is infeasible. Gate satisfied: vectorized ≤ legacy
+for all measured sizes.
+
 ## 9. Risks
 - `searchsorted`/doubled-array indexing off-by-one at the wrap — covered by the
   invariant + parity tests.
