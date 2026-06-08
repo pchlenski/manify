@@ -1,6 +1,6 @@
 """Direct equivalence tests for the vectorized info-gain computation.
 
-The live ``manify.predictors.decision_tree._get_info_gains_nobatch`` was
+The live ``manify.predictors.decision_tree._get_info_gains`` was
 vectorized (sort + circular window + cumulative sums) in the PERFORMANCE step of
 the CART refactor (see docs/design/cart_refactor.md, sections 3.3 and 8). These
 tests assert the vectorized implementation reproduces a straightforward
@@ -24,7 +24,7 @@ NotImplementedError).
 import pytest
 import torch
 
-from manify.predictors.decision_tree import _angular_greater, _get_info_gains_nobatch
+from manify.predictors.decision_tree import _angular_greater, _get_info_gains
 
 
 def _reference_info_gains(
@@ -128,7 +128,7 @@ def test_gini_bit_exact(shape, seed):
     n_rows, n_dims, n_classes = shape
     angles, labels = _random_classification(n_rows, n_dims, n_classes, seed)
     ref = _reference_info_gains(angles, labels, criterion="gini")
-    got = _get_info_gains_nobatch(angles=angles, labels=labels, criterion="gini")
+    got = _get_info_gains(angles=angles, labels=labels, criterion="gini")
     assert torch.equal(ref, got), f"gini ig differs for shape={shape} seed={seed}"
 
 
@@ -139,7 +139,7 @@ def test_gini_bit_exact_with_duplicates(shape, seed):
     n_rows, n_dims, n_classes = shape
     angles, labels = _random_classification(n_rows, n_dims, n_classes, seed, duplicates=True)
     ref = _reference_info_gains(angles, labels, criterion="gini")
-    got = _get_info_gains_nobatch(angles=angles, labels=labels, criterion="gini")
+    got = _get_info_gains(angles=angles, labels=labels, criterion="gini")
     assert torch.equal(ref, got), f"gini ig (dup) differs for shape={shape} seed={seed}"
 
 
@@ -152,7 +152,7 @@ def test_mse_allclose(shape, seed):
     angles = (torch.rand(n_rows, n_dims) * 2 - 1) * torch.pi
     labels = torch.randn(n_rows)
     ref = _reference_info_gains(angles, labels, criterion="mse")
-    got = _get_info_gains_nobatch(angles=angles, labels=labels, criterion="mse")
+    got = _get_info_gains(angles=angles, labels=labels, criterion="mse")
     assert torch.allclose(ref, got, atol=1e-6, rtol=1e-5), (
         f"mse ig differs beyond tol for shape={shape} seed={seed}: max abs diff {(ref - got).abs().max().item():.3e}"
     )
@@ -187,5 +187,5 @@ def test_argmax_picks_same_element():
     for seed in SEEDS:
         angles, labels = _random_classification(60, 4, 3, seed)
         ref = _reference_info_gains(angles, labels, criterion="gini")
-        got = _get_info_gains_nobatch(angles=angles, labels=labels, criterion="gini")
+        got = _get_info_gains(angles=angles, labels=labels, criterion="gini")
         assert ref.argmax() == got.argmax(), f"argmax differs for seed={seed}"

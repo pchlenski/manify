@@ -35,7 +35,7 @@ def _angular_greater(
     return (diff + torch.pi) % (2 * torch.pi) >= torch.pi
 
 
-def _get_info_gains_nobatch(
+def _get_info_gains(
     angles: Float[torch.Tensor, "batch n_dims"],
     labels: Float[torch.Tensor, "batch n_classes"] | Float[torch.Tensor, "batch"],
     criterion: Literal["gini", "mse"] = "gini",
@@ -564,7 +564,7 @@ class ProductSpaceDT(BasePredictor):
             return _halt(labels)
 
         # Compute information gains for every candidate split
-        ig = _get_info_gains_nobatch(angles=angles, labels=labels, criterion=self.criterion)  # type: ignore
+        ig = _get_info_gains(angles=angles, labels=labels, criterion=self.criterion)  # type: ignore
 
         # Check if we have a valid split
         if ig.max() <= self.min_impurity_decrease:
