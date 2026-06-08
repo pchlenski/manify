@@ -185,5 +185,13 @@ from manify.predictors.decision_tree import ProductSpaceDT, ProductSpaceRF
 from manify.predictors.kappa_gcn import KappaGCN
 from manify.predictors.perceptron import ProductSpacePerceptron
 from manify.predictors.svm import ProductSpaceSVM
+from manify.predictors.transformer import KappaTransformer
 
-__all__ = ["ProductSpaceDT", "ProductSpaceRF", "KappaGCN", "ProductSpacePerceptron", "ProductSpaceSVM"]
+__all__ = [
+    "ProductSpaceDT",
+    "ProductSpaceRF",
+    "KappaGCN",
+    "KappaTransformer",
+    "ProductSpacePerceptron",
+    "ProductSpaceSVM",
+]

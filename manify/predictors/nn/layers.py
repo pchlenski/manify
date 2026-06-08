@@ -607,8 +607,8 @@ class StereographicTransformer(nn.Module):
         mha: Multi-head stereographic attention module.
         norm1: First normalization layer (Identity or StereographicLayerNorm).
         norm2: Second normalization layer (Identity or StereographicLayerNorm).
-        mlpblock: Feedforward network operating on the manifold.
-        stereographic_activation: Activation wrapped to operate in tangent space.
+        ff1: First feedforward KappaGCNLayer (with ReLU nonlinearity).
+        ff2: Second feedforward KappaGCNLayer (no nonlinearity).
     """
 
     def __init__(
@@ -628,7 +628,6 @@ class StereographicTransformer(nn.Module):
             )
 
         self.manifold = manifold
-        self.stereographic_activation = manifold.apply(nn.ReLU())
         self.mha = StereographicAttention(manifold=manifold, num_heads=num_heads, dim=dim, head_dim=head_dim)
 
         if use_layer_norm:
