@@ -101,7 +101,6 @@ def benchmark(
     X_test: Float[torch.Tensor, "n_samples n_manifolds"] | None = None,
     y_train: Real[torch.Tensor, "n_samples"] | None = None,
     y_test: Real[torch.Tensor, "n_samples"] | None = None,
-    batch_size: int | None = None,
     adj: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     A_train: Float[torch.Tensor, "n_samples n_samples"] | None = None,
     A_test: Float[torch.Tensor, "n_samples n_samples"] | None = None,
@@ -149,7 +148,6 @@ def benchmark(
             Must be provided if X_train is given. Defaults to None.
         y_test: Testing labels tensor with shape (n_samples,).
             Must be provided if X_test is given. Defaults to None.
-        batch_size: Batch size for neural network models. Defaults to None.
         adj: Adjacency matrix for graph-based models with shape (n_nodes, n_nodes).
             Defaults to None.
         A_train: Training adjacency matrix with shape (n_samples, n_samples).
@@ -289,7 +287,7 @@ def benchmark(
 
     # Aggregate arguments
     tree_kwargs = {"max_depth": max_depth, "min_samples_leaf": min_samples_leaf, "min_samples_split": min_samples_split}
-    prod_kwargs = {"use_special_dims": use_special_dims, "n_features": n_features, "batch_size": batch_size}
+    prod_kwargs = {"use_special_dims": use_special_dims, "n_features": n_features}
     rf_kwargs = {"n_estimators": n_estimators, "n_jobs": -1, "random_state": seed}
     nn_outdim = 1 if task == "regression" else len(torch.unique(y))
     nn_kwargs = {"task": task, "output_dim": nn_outdim}

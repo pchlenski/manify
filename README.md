@@ -113,7 +113,7 @@ If you use our work, please cite the `Manify` paper:
 ```bibtex
 @misc{chlenski2025manifypythonlibrarylearning,
       title={Manify: A Python Library for Learning Non-Euclidean Representations}, 
-      author={Philippe Chlenski and Kaizhu Du and Dylan Satow and Itsik Pe'er},
+      author={Philippe Chlenski and Kaizhu Du and Dylan Satow and Raiyan R. Khan and Itsik Pe'er},
       year={2025},
       eprint={2503.09576},
       archivePrefix={arXiv},

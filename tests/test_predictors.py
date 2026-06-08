@@ -203,29 +203,20 @@ def test_all_link_predictors():
     print("All link predictors tested successfully.")
 
 
-def test_random_forest_batch():
+def test_random_forest_fit_predict():
+    # The batched code path (and its batch_size param) was removed in the CART
+    # refactor; the single nobatch path is now the only implementation. This just
+    # asserts the RF fits and predicts sensibly without any batch_size plumbing.
     pm = ProductManifold(signature=[(-1.0, 2), (0.0, 2), (1.0, 2)])
     X, y = pm.gaussian_mixture(num_points=100, num_classes=2, seed=42)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    batch_sizes = [1, 10, None]
-    preds_list = []
-
-    for batch_size in batch_sizes:
-        rf = ProductSpaceRF(pm=pm, batch_size=batch_size, n_estimators=2, random_state=42, max_features="none")
-        rf.fit(X_train, y_train)
-        preds = rf.predict(X_test)
-        assert preds.shape[0] == X_test.shape[0], "Predictions should match the number of test samples"
-        assert preds.ndim == 1, "Predictions should be a 1D array"
-        assert (preds == y_test).float().mean() >= 0.5, "Model did not achieve sufficient accuracy"
-        preds_list.append(preds)
-
-    # Check equality for all outputs
-    for i in range(len(preds_list)):
-        for j in range(i + 1, len(preds_list)):
-            assert torch.allclose(preds_list[i], preds_list[j]), (
-                f"Predictions should be the same for batch sizes {batch_sizes[i]} and {batch_sizes[j]}"
-            )
+    rf = ProductSpaceRF(pm=pm, n_estimators=2, random_state=42, max_features="none")
+    rf.fit(X_train, y_train)
+    preds = rf.predict(X_test)
+    assert preds.shape[0] == X_test.shape[0], "Predictions should match the number of test samples"
+    assert preds.ndim == 1, "Predictions should be a 1D array"
+    assert (preds == y_test).float().mean() >= 0.5, "Model did not achieve sufficient accuracy"
 
 
 def test_decision_tree_special_dims_ablate_midpoints():
@@ -286,3 +277,16 @@ def test_random_forest_max_features():
     rf_all = ProductSpaceRF(pm=pm, max_features="none", n_estimators=2)
     rf_all.fit(X_train, y_train)
     assert total_angles == rf_all.trees[0].permutations.shape[0]
+
+
+def test_sphere_train_consistency():
+    """Full-depth DT must reproduce its own training labels on the sphere.
+
+    Guards against a split threshold that routes inference differently from the
+    training partition on spherical (circular-angle) features.
+    """
+    pm = ProductManifold(signature=[(1.0, 3)])
+    X, y = pm.gaussian_mixture(num_points=80, num_classes=3, seed=0)
+    dt = ProductSpaceDT(pm=pm, task="classification", max_depth=None, min_samples_split=2).fit(X, y)
+    acc = (dt.predict(X) == y).float().mean().item()
+    assert acc == 1.0, f"train accuracy {acc} < 1.0: split misroutes its own training data"
