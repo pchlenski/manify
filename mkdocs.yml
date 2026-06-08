@@ -55,16 +55,12 @@ nav:
       - Midpoint: reference/predictors/_midpoint.md
       - Neural Network Layers:
         - Overview: reference/predictors/nn/index.md
-        - Kappa-GCN Layer: reference/predictors/nn/layers/kappa_gcn_layer.md
-        - Kappa Sequential Container: reference/predictors/nn/layers/kappa_sequential.md
-        - Stereographic Logits: reference/predictors/nn/layers/stereographic_logits.md
-        - Fermi-Dirac Decoder: reference/predictors/nn/layers/fermi_dirac_decoder.md
+        - Layers: reference/predictors/nn/layers.md
     - Utils:
       - Overview: reference/utils/index.md
       - Benchmarks: reference/utils/benchmarks.md
       - Dataloaders: reference/utils/dataloaders.md
       - Link Prediction: reference/utils/link_prediction.md
-      - Preprocessing: reference/utils/preprocessing.md
       - Visualization: reference/utils/visualization.md
 
 markdown_extensions:
