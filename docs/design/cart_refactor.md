@@ -117,13 +117,12 @@ phase we enforce **equivalence to the legacy tree** via a frozen oracle:
   n_features ∈ {d, d_choose_2})` and asserts:
   - `new.predict(X) == old.predict(X)` exactly, and `predict_proba` `allclose`.
   - For RF: same with a fixed `random_state`.
-- Because the wraparound pathology is rare on random data, we expect ~100%
-  match. **Any mismatch is triaged, not silently allowed**: it must be shown to
-  be a wraparound case where the *new* tree satisfies the train-consistency
-  invariant (§5) and the old one does not. (If we want zero mismatches in Phase
-  A, the alternative is to have the new code reproduce the legacy midpoint
-  selection exactly and defer *all* behavior change to Phase B — heavier, but
-  available if you want truly bitwise parity per-commit.)
+- **Strictly bitwise (decided).** The new code reproduces legacy's candidate
+  selection, tie-breaking (argmax order), and midpoint *exactly* — including the
+  spherical `(u+v)/2` and the numerical nearest-neighbour — so the parity grid is
+  **100% bit-exact on every signature, every commit**. No mismatches are tolerated
+  in Phase A; all behaviour change is deferred to Phase B. This is the strongest
+  guard that the data-structure surgery changes nothing we didn't intend.
 
 Phase A lands only when the parity grid is green. This proves the data-structure
 change introduces no unintended behavior change.
@@ -139,16 +138,26 @@ cases. In this diff we:
 Net: a bisectable history where every refactor commit is provably equivalent and
 the one behavior change is isolated and reviewable.
 
-### Lifecycle of the legacy oracle (answering "move to tests or drop?")
-**Both, sequenced.** Keep the frozen legacy module + parity grid *during* the
-migration. Once Phase B has merged and baked (a release or so), **delete** the
-legacy oracle and the pure-equivalence tests — a frozen copy of internal code
-is maintenance rot. But first distill the guarantees worth keeping into
-**oracle-free** tests so nothing is lost:
-- **Golden/characterization tests**: snapshot the new model's predictions on a
-  fixed `(seed, signature)` set (inline arrays or a tiny committed fixture).
-- **Permanent invariants** (§5), including sklearn-as-oracle on the Euclidean
-  case — that one stays forever because sklearn isn't going anywhere.
+### Lifecycle of the legacy oracle (decided)
+The frozen legacy implementation **lives permanently in `tests/legacy/`** and is
+the oracle for a **permanent bit-exact parity test on noncircular signatures** —
+Euclidean- and Hyperbolic-only products, which never exercise the spherical
+circular-midpoint path. We enforce noncircular bit-exactness *forever*, not just
+during migration: it's cheap and it pins the behaviour that should never change.
+
+Only the **circular (spherical) parity** changes across phases:
+- During Phase A it is bit-exact (new == legacy everywhere).
+- In Phase B the spherical behaviour is deliberately fixed, so the spherical
+  parity expectations are removed and replaced by the oracle-free invariants
+  (§5). The noncircular (E/H) parity stays green throughout and afterward.
+
+> Note: a hyperbolic/Euclidean component's *secondary* angles still route through
+> the catch-all `spherical_midpoint`. "Noncircular" here means signatures with **no
+> spherical factor**; if a secondary-dim midpoint ever causes an E/H parity break,
+> that divergence is treated as part of Phase B and documented.
+
+Also keep **golden/characterization** snapshots of the new model's predictions
+for a fixed `(seed, signature)` set as defence against future drift.
 
 ## 5. Test plan (durable, oracle-free)
 - **Train-consistency invariant**: a full-depth `ProductSpaceDT` reproduces its
@@ -170,21 +179,34 @@ is maintenance rot. But first distill the guarantees worth keeping into
 4. RF onto the new `_fit_node`; parity for ensembles.
 5. **Phase B**: circular midpoints; flip wraparound expectations; invariants
    become source of truth.
-6. Cleanup: remove dead helpers; after bake, remove legacy oracle + pure-parity
-   tests, keep golden + invariants.
+6. Cleanup: remove dead helpers. Keep the legacy oracle + the **noncircular**
+   bit-exact parity test permanently; only the spherical pure-parity tests are
+   retired in Phase B (replaced by invariants + golden tests).
 
-## 7. Open questions
-- Keep `n_features="d_choose_2"`, or fold into "just more features"? (Lean keep.)
-- Tie handling for duplicate angles in the window edges (define `<` vs `≤`
-  consistently between fit and inference).
-- Vectorize across features in torch (preferred) vs per-feature loop.
-- Do we want strictly-bitwise Phase A (reproduce legacy midpoint) or the
-  randomized-parity-with-triage approach above? (Lean the latter.)
+## 7. Decisions (resolved)
+- **`n_features="d_choose_2"`: keep.**
+- **Tie-handling: sklearn-style, consistent between fit and inference.** Phase A
+  must match legacy's tie-breaking bit-exactly, so if the sklearn-style rule
+  diverges from legacy it is applied as the **final diff(s)**, after spherical
+  pure-parity is gone. Preferred: pick a tie rule that keeps E/H bit-exact so the
+  permanent noncircular test stays strict; if not possible, that step is explicit,
+  documented, and downgrades the permanent test to "bit-exact modulo tie order".
+- **Vectorize across features** (torch `argsort`/`cumsum`/`searchsorted`), gated
+  on the §8 benchmark proving it's faster across most input sizes.
+- **Phase A is strictly bitwise** (see §4).
 
-## 8. Risks
+## 8. Performance benchmark (gate for the vectorized path)
+Before deleting the legacy path, benchmark fit (and predict) wall-clock + peak
+memory of new vs legacy across `n_points ∈ {50, 200, 1k, 5k, 20k}`, `n_features`,
+`max_depth`, and a few signatures. Require new ≤ legacy for most sizes (especially
+large n); record the crossover if small-n regresses. Commit the script + a results
+table.
+
+## 9. Risks
 - `searchsorted`/doubled-array indexing off-by-one at the wrap — covered by the
   invariant + parity tests.
-- Float ties producing different sort orders than legacy → benign prediction
-  differences; parity test tolerances/triage handle it.
+- Reproducing legacy's argmax tie-breaking exactly in the vectorized path (the
+  Phase A bitwise requirement) is the main implementation risk; the parity grid
+  catches any divergence immediately.
 - RF determinism: keep the exact `random_state` seeding/order so ensembles stay
   reproducible.
