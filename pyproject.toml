@@ -14,13 +14,21 @@ authors = [
     { name = "Philippe Chlenski", email = "pac@cs.columbia.edu"},
     { name = "Kaizhu Du", email = "kd2814@columbia.edu"}
 ]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
     "torch",
     "geoopt>=0.5.1",
     "numpy",
     "tqdm",
     "cvxpy",
-    "scikit-learn==1.5.1",
+    "scikit-learn",
     "datasets"
 ]
 
