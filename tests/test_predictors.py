@@ -7,6 +7,7 @@ from manify.predictors.decision_tree import ProductSpaceDT, ProductSpaceRF
 from manify.predictors.kappa_gcn import KappaGCN, get_A_hat
 from manify.predictors.perceptron import ProductSpacePerceptron
 from manify.predictors.svm import ProductSpaceSVM
+from manify.predictors.transformer import KappaTransformer
 from manify.utils.link_prediction import make_link_prediction_dataset, split_link_prediction_dataset
 
 
@@ -86,6 +87,10 @@ def test_all_classifiers():
     kappa_gcn = KappaGCN(pm=pm_stereo, output_dim=2, num_hidden=2)
     _test_kappa_gcn_model(kappa_gcn, X_train_stereo, X_test_stereo, y_train, y_test, pm=pm_stereo)
 
+    # KappaTransformer shares the KappaGCN fit/predict(A=...) interface
+    kappa_transformer = KappaTransformer(pm=pm_stereo, output_dim=2, num_layers=2, num_heads=2, random_state=42)
+    _test_kappa_gcn_model(kappa_transformer, X_train_stereo, X_test_stereo, y_train, y_test, pm=pm_stereo)
+
     print("All classifiers tested successfully.")
 
 
@@ -109,6 +114,14 @@ def test_all_regressors():
     pm_stereo, X_train_stereo, X_test_stereo = pm.stereographic(X_train, X_test)
     kappa_gcn = KappaGCN(pm=pm_stereo, output_dim=1, num_hidden=2, task="regression")
     _test_kappa_gcn_model(kappa_gcn, X_train_stereo, X_test_stereo, y_train, y_test, pm=pm_stereo, task="regression")
+
+    # KappaTransformer shares the KappaGCN fit/predict(A=...) interface
+    kappa_transformer = KappaTransformer(
+        pm=pm_stereo, output_dim=1, num_layers=2, num_heads=2, task="regression", random_state=42
+    )
+    _test_kappa_gcn_model(
+        kappa_transformer, X_train_stereo, X_test_stereo, y_train, y_test, pm=pm_stereo, task="regression"
+    )
 
     print("All regressors tested successfully.")
 

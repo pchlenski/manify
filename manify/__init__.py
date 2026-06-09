@@ -11,10 +11,21 @@ if os.getenv("BEARTYPE_ENABLE", "false").lower() == "true":
     print("Beartype import hook installed for Manify. Will use beartype for type checking.")
 
 from manify.clustering import RiemannianFuzzyKMeans
-from manify.curvature_estimation import delta_hyperbolicity, greedy_signature_selection, sectional_curvature
+from manify.curvature_estimation import (
+    delta_hyperbolicity,
+    greedy_signature_selection,
+    sectional_curvature,
+)
 from manify.embedders import CoordinateLearning, ProductSpaceVAE, SiameseNetwork
 from manify.manifolds import Manifold, ProductManifold
-from manify.predictors import KappaGCN, ProductSpaceDT, ProductSpacePerceptron, ProductSpaceRF, ProductSpaceSVM
+from manify.predictors import (
+    KappaGCN,
+    KappaTransformer,
+    ProductSpaceDT,
+    ProductSpacePerceptron,
+    ProductSpaceRF,
+    ProductSpaceSVM,
+)
 
 # import manify.utils
 
@@ -42,6 +53,7 @@ __all__ = [
     "ProductSpaceDT",
     "ProductSpaceRF",
     "KappaGCN",
+    "KappaTransformer",
     "ProductSpacePerceptron",
     "ProductSpaceSVM",
     # manify.curvature_estimation

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         "tangent_gcn",
         "ambient_gcn",
         "kappa_gcn",
+        "kappa_transformer",
         "ambient_mlr",
         "tangent_mlr",
         "kappa_mlr",
@@ -51,6 +52,7 @@ from ..predictors.decision_tree import ProductSpaceDT, ProductSpaceRF
 from ..predictors.kappa_gcn import KappaGCN, get_A_hat
 from ..predictors.perceptron import ProductSpacePerceptron
 from ..predictors.svm import ProductSpaceSVM
+from ..predictors.transformer import KappaTransformer
 
 
 def _score(
@@ -178,6 +180,7 @@ def benchmark(
         "tangent_gcn",
         "ambient_gcn",
         "kappa_gcn",
+        "kappa_transformer",
         "ambient_mlr",
         "tangent_mlr",
         "kappa_mlr",
@@ -249,9 +252,9 @@ def benchmark(
     X_test_tangent = pm.logmap(X_test).detach()
 
     # Get numpy versions
-    X_train_np, X_test_np = X_train.detach().cpu().numpy(), X_test.detach().cpu().numpy()
-    y_train_np, y_test_np = y_train.detach().cpu().numpy(), y_test.detach().cpu().numpy()
-    X_train_tangent_np, X_test_tangent_np = X_train_tangent.cpu().numpy(), X_test_tangent.cpu().numpy()
+    X_train_np, X_test_np = (X_train.detach().cpu().numpy(), X_test.detach().cpu().numpy())
+    y_train_np, y_test_np = (y_train.detach().cpu().numpy(), y_test.detach().cpu().numpy())
+    X_train_tangent_np, X_test_tangent_np = (X_train_tangent.cpu().numpy(), X_test_tangent.cpu().numpy())
 
     # Get stereographic version
     pm_stereo, X_train_stereo, X_test_stereo = pm.stereographic(X_train, X_test)
@@ -368,8 +371,7 @@ def benchmark(
         train_dists = torch.nan_to_num(train_dists, nan=train_dists[~train_dists.isnan()].max().item())
         train_test_dists = pm.dist(X_test, X_train)
         train_test_dists = torch.nan_to_num(
-            train_test_dists,
-            nan=train_test_dists[~train_test_dists.isnan()].max().item(),
+            train_test_dists, nan=train_test_dists[~train_test_dists.isnan()].max().item()
         )
 
         # Convert to numpy
@@ -500,6 +502,34 @@ def benchmark(
         y_pred = kappa_gcn.predict(X_test_stereo, A=A_test)
         accs["kappa_gcn"] = _score(None, y_test_np, None, y_pred_override=y_pred, use_torch=True, score=score)
         accs["kappa_gcn"]["time"] = t2 - t1
+
+    if "kappa_transformer" in models:
+        if task == "link_prediction":
+            warnings.warn("kappa_transformer only supports classification/regression; skipping.", stacklevel=2)
+        else:
+            assert isinstance(X_test_stereo, torch.Tensor)
+            # head_dim must divide pm.dim across heads; fall back to 1 head for tiny manifolds.
+            n_heads = 2 if pm_stereo.dim >= 2 else 1
+            # The transformer block is attention + residual; it needs at least a couple of blocks to
+            # be competitive (a single block barely moves signal past the residual), unlike a GCN conv.
+            n_layers = max(2, kappa_gcn_layers)
+            kappa_transformer = KappaTransformer(
+                pm=pm_stereo,
+                num_layers=n_layers,
+                num_heads=n_heads,
+                task=task,
+                output_dim=nn_outdim,  # type: ignore
+            ).to(device)
+            t1 = time.time()
+            kappa_transformer.fit(
+                X_train_stereo, y_train, A=A_train, tqdm_prefix="kappa_transformer", **nn_train_kwargs
+            )
+            t2 = time.time()
+            y_pred = kappa_transformer.predict(X_test_stereo, A=A_test)
+            accs["kappa_transformer"] = _score(
+                None, y_test_np, None, y_pred_override=y_pred, use_torch=True, score=score
+            )
+            accs["kappa_transformer"]["time"] = t2 - t1
 
     if "kappa_mlr" in models:
         kappa_mlr = KappaGCN(pm=pm_stereo, num_hidden=0, task=task, output_dim=nn_outdim).to(device)  # type: ignore
