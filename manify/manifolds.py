@@ -205,6 +205,14 @@ class Manifold:
             tangent_points: Tensor of points in the tangent plane at the origin.
         """
         x = torch.Tensor(x).reshape(-1, self.dim)
+        if self.is_stereographic:
+            # Stereographic models keep the intrinsic dimension (ambient_dim == dim), so there is no
+            # extra coordinate to prepend. The conformal factor at the origin is
+            # lambda_0 = 2 / (1 + curvature * ||0||^2) = 2 (for every curvature, including the flat
+            # case), so we divide the orthonormal tangent vector by lambda_0 to express it in
+            # stereographic coordinates and recover a correctly scaled wrapped-normal sample
+            # (matching the equivalent non-stereographic manifold).
+            return x / 2.0
         if self.type == "E":
             return x
         return torch.cat([torch.zeros((x.shape[0], 1), device=self.device), x], dim=1)

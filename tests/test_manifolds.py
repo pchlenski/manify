@@ -443,3 +443,53 @@ def test_sampling_edge_cases():
     large_Sigma = torch.eye(m.dim) * 10.0
     samples_large = m.sample(n_samples=100, z_mean=mu, sigma=large_Sigma)
     assert samples_large.shape == (100, m.ambient_dim), "Sampling failed for large covariance"
+
+
+def test_stereographic_sampling():
+    """Regression test for sampling on stereographic manifolds (see issue #37).
+
+    Sampling on stereographic manifolds used to crash because the intrinsic tangent vector was
+    embedded with an extra ambient coordinate (correct for the Lorentz/sphere models, but wrong
+    for stereographic coordinates where ambient_dim == dim). This verifies that sampling now (a)
+    runs and lands on the manifold, and (b) produces the same wrapped-normal distribution as the
+    equivalent non-stereographic manifold (distances to the origin are an intrinsic quantity).
+    """
+    print("Testing sampling on stereographic manifolds...")
+
+    curvatures = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+
+    # Single stereographic manifolds: no crash, points on manifold, distribution matches reference
+    quantiles = torch.tensor([0.25, 0.5, 0.75, 0.9])
+    for K in curvatures:
+        print(f"  Testing curvature K = {K}")
+        m_stereo = Manifold(K, 4, stereographic=True)
+        assert m_stereo.is_stereographic
+
+        torch.manual_seed(42)
+        samples = m_stereo.sample(100)
+        assert samples.shape == (100, m_stereo.ambient_dim), f"Sample shape mismatch for stereographic K={K}"
+        assert m_stereo.manifold.check_point(samples), f"Stereographic samples not on manifold for K={K}"
+
+        # Wrapped-normal distance-to-origin should match the non-stereographic manifold of the same curvature
+        m_ref = Manifold(K, 4, stereographic=False)
+        torch.manual_seed(0)
+        d_ref = m_ref.dist(m_ref.sample(20000), m_ref.mu0).flatten()
+        torch.manual_seed(0)
+        d_stereo = m_stereo.dist(m_stereo.sample(20000), m_stereo.mu0).flatten()
+        q_ref = torch.quantile(d_ref, quantiles)
+        q_stereo = torch.quantile(d_stereo, quantiles)
+        max_rel_diff = ((q_ref - q_stereo).abs() / q_ref.clamp_min(1e-6)).max().item()
+        assert max_rel_diff < 0.05, (
+            f"Stereographic wrapped-normal does not match reference for K={K} (max rel diff {max_rel_diff:.4f})"
+        )
+
+    # Stereographic product manifold: sampling and gaussian_mixture should both work
+    pm_stereo = ProductManifold([(-1.0, 4), (0.0, 4), (1.0, 4)], stereographic=True)
+    torch.manual_seed(42)
+    samples = pm_stereo.sample(50)
+    assert samples.shape == (50, pm_stereo.ambient_dim), "Sample shape mismatch for stereographic product manifold"
+    assert pm_stereo.manifold.check_point(samples), "Stereographic product samples not on manifold"
+
+    X, y = pm_stereo.gaussian_mixture(num_points=100, num_classes=2, seed=42)
+    assert X.shape == (100, pm_stereo.ambient_dim), "gaussian_mixture shape mismatch on stereographic product manifold"
+    assert pm_stereo.manifold.check_point(X), "gaussian_mixture samples not on stereographic product manifold"
