@@ -1,6 +1,8 @@
 """Manify: A Python Library for Learning Non-Euclidean Representations."""
 
 import os
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 if os.getenv("BEARTYPE_ENABLE", "false").lower() == "true":
     from jaxtyping import install_import_hook
@@ -9,15 +11,31 @@ if os.getenv("BEARTYPE_ENABLE", "false").lower() == "true":
     print("Beartype import hook installed for Manify. Will use beartype for type checking.")
 
 from manify.clustering import RiemannianFuzzyKMeans
-from manify.curvature_estimation import delta_hyperbolicity, greedy_signature_selection, sectional_curvature
+from manify.curvature_estimation import (
+    delta_hyperbolicity,
+    greedy_signature_selection,
+    sectional_curvature,
+)
 from manify.embedders import CoordinateLearning, ProductSpaceVAE, SiameseNetwork
 from manify.manifolds import Manifold, ProductManifold
-from manify.predictors import KappaGCN, ProductSpaceDT, ProductSpacePerceptron, ProductSpaceRF, ProductSpaceSVM
+from manify.predictors import (
+    KappaGCN,
+    KappaTransformer,
+    ProductSpaceDT,
+    ProductSpacePerceptron,
+    ProductSpaceRF,
+    ProductSpaceSVM,
+)
 
 # import manify.utils
 
-# Define version and other package metadata
-__version__ = "0.0.2"
+# Define version and other package metadata.
+# Read from installed package metadata so this stays in sync with pyproject.toml;
+# fall back to a literal when running from a source tree without an install.
+try:
+    __version__ = _pkg_version("manify")
+except PackageNotFoundError:  # pragma: no cover - source checkout without install
+    __version__ = "0.2.1"
 __author__ = "Philippe Chlenski"
 __email__ = "pac@cs.columbia.edu"
 __license__ = "MIT"
@@ -35,6 +53,7 @@ __all__ = [
     "ProductSpaceDT",
     "ProductSpaceRF",
     "KappaGCN",
+    "KappaTransformer",
     "ProductSpacePerceptron",
     "ProductSpaceSVM",
     # manify.curvature_estimation

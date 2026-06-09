@@ -36,8 +36,8 @@ def get_A_hat(
     Returns:
         A_hat: Normalized adjacency matrix.
     """
-    # Fix nans
-    A[torch.isnan(A)] = 0
+    # Fix nans (without mutating the caller's tensor)
+    A = torch.where(torch.isnan(A), torch.zeros_like(A), A)
 
     # Optional steps to make symmetric and add self-loops
     if make_symmetric and not torch.allclose(A, A.T):
@@ -169,7 +169,7 @@ class KappaGCN(BasePredictor, torch.nn.Module):
             X (torch.Tensor): Feature matrix.
             y (torch.Tensor): Labels for training nodes.
             A (torch.Tensor): Adjacency or distance matrix.
-            epochs: Number of training epochs (default=200).
+            epochs: Number of training epochs (default=2000).
             lr: Learning rate (default=1e-2).
             use_tqdm: Whether to use tqdm for progress bar.
             tqdm_prefix: Prefix for tqdm progress bar.

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         "tangent_gcn",
         "ambient_gcn",
         "kappa_gcn",
+        "kappa_transformer",
         "ambient_mlr",
         "tangent_mlr",
         "kappa_mlr",
@@ -51,6 +52,7 @@ from ..predictors.decision_tree import ProductSpaceDT, ProductSpaceRF
 from ..predictors.kappa_gcn import KappaGCN, get_A_hat
 from ..predictors.perceptron import ProductSpacePerceptron
 from ..predictors.svm import ProductSpaceSVM
+from ..predictors.transformer import KappaTransformer
 
 
 def _score(
@@ -99,7 +101,6 @@ def benchmark(
     X_test: Float[torch.Tensor, "n_samples n_manifolds"] | None = None,
     y_train: Real[torch.Tensor, "n_samples"] | None = None,
     y_test: Real[torch.Tensor, "n_samples"] | None = None,
-    batch_size: int | None = None,
     adj: Float[torch.Tensor, "n_nodes n_nodes"] | None = None,
     A_train: Float[torch.Tensor, "n_samples n_samples"] | None = None,
     A_test: Float[torch.Tensor, "n_samples n_samples"] | None = None,
@@ -147,14 +148,11 @@ def benchmark(
             Must be provided if X_train is given. Defaults to None.
         y_test: Testing labels tensor with shape (n_samples,).
             Must be provided if X_test is given. Defaults to None.
-        batch_size: Batch size for neural network models. Defaults to None.
         adj: Adjacency matrix for graph-based models with shape (n_nodes, n_nodes).
             Defaults to None.
         A_train: Training adjacency matrix with shape (n_samples, n_samples).
             Defaults to None.
         A_test: Testing adjacency matrix with shape (n_samples, n_samples).
-            Defaults to None.
-        hidden_dims: List of hidden layer dimensions for neural networks.
             Defaults to None.
         epochs: Number of training epochs for iterative models. Defaults to 4000.
         lr: Learning rate for gradient-based optimization. Defaults to 1e-4.
@@ -163,7 +161,9 @@ def benchmark(
     Returns:
         Dictionary mapping model names to their corresponding evaluation scores.
     """
-    score = score or ["accuracy", "f1-micro", "f1-macro"]
+    # Task-appropriate default scores (regression cannot use accuracy/f1).
+    if score is None:
+        score = ["mse", "rmse"] if task == "regression" else ["accuracy", "f1-micro", "f1-macro"]
     models = models or [
         "sklearn_dt",
         "sklearn_rf",
@@ -180,17 +180,12 @@ def benchmark(
         "tangent_gcn",
         "ambient_gcn",
         "kappa_gcn",
+        "kappa_transformer",
         "ambient_mlr",
         "tangent_mlr",
         "kappa_mlr",
         "single_manifold_rf",
     ]
-
-    # Input validation on (task, score) pairing
-    if task in {"classification", "link_prediction"}:
-        assert all(s in {"accuracy", "f1-micro", "f1-macro", "time"} for s in score)
-    elif task == "regression":
-        assert all(s in {"mse", "rmse", "percent_rmse", "time"} for s in score)
 
     # Input validation on (task, score) pairing
     if task in {"classification", "link_prediction"}:
@@ -257,9 +252,9 @@ def benchmark(
     X_test_tangent = pm.logmap(X_test).detach()
 
     # Get numpy versions
-    X_train_np, X_test_np = X_train.detach().cpu().numpy(), X_test.detach().cpu().numpy()
-    y_train_np, y_test_np = y_train.detach().cpu().numpy(), y_test.detach().cpu().numpy()
-    X_train_tangent_np, X_test_tangent_np = X_train_tangent.cpu().numpy(), X_test_tangent.cpu().numpy()
+    X_train_np, X_test_np = (X_train.detach().cpu().numpy(), X_test.detach().cpu().numpy())
+    y_train_np, y_test_np = (y_train.detach().cpu().numpy(), y_test.detach().cpu().numpy())
+    X_train_tangent_np, X_test_tangent_np = (X_train_tangent.cpu().numpy(), X_test_tangent.cpu().numpy())
 
     # Get stereographic version
     pm_stereo, X_train_stereo, X_test_stereo = pm.stereographic(X_train, X_test)
@@ -292,7 +287,7 @@ def benchmark(
 
     # Aggregate arguments
     tree_kwargs = {"max_depth": max_depth, "min_samples_leaf": min_samples_leaf, "min_samples_split": min_samples_split}
-    prod_kwargs = {"use_special_dims": use_special_dims, "n_features": n_features, "batch_size": batch_size}
+    prod_kwargs = {"use_special_dims": use_special_dims, "n_features": n_features}
     rf_kwargs = {"n_estimators": n_estimators, "n_jobs": -1, "random_state": seed}
     nn_outdim = 1 if task == "regression" else len(torch.unique(y))
     nn_kwargs = {"task": task, "output_dim": nn_outdim}
@@ -376,8 +371,7 @@ def benchmark(
         train_dists = torch.nan_to_num(train_dists, nan=train_dists[~train_dists.isnan()].max().item())
         train_test_dists = pm.dist(X_test, X_train)
         train_test_dists = torch.nan_to_num(
-            train_test_dists,
-            nan=train_test_dists[~train_test_dists.isnan()].max().item(),
+            train_test_dists, nan=train_test_dists[~train_test_dists.isnan()].max().item()
         )
 
         # Convert to numpy
@@ -508,6 +502,34 @@ def benchmark(
         y_pred = kappa_gcn.predict(X_test_stereo, A=A_test)
         accs["kappa_gcn"] = _score(None, y_test_np, None, y_pred_override=y_pred, use_torch=True, score=score)
         accs["kappa_gcn"]["time"] = t2 - t1
+
+    if "kappa_transformer" in models:
+        if task == "link_prediction":
+            warnings.warn("kappa_transformer only supports classification/regression; skipping.", stacklevel=2)
+        else:
+            assert isinstance(X_test_stereo, torch.Tensor)
+            # head_dim must divide pm.dim across heads; fall back to 1 head for tiny manifolds.
+            n_heads = 2 if pm_stereo.dim >= 2 else 1
+            # The transformer block is attention + residual; it needs at least a couple of blocks to
+            # be competitive (a single block barely moves signal past the residual), unlike a GCN conv.
+            n_layers = max(2, kappa_gcn_layers)
+            kappa_transformer = KappaTransformer(
+                pm=pm_stereo,
+                num_layers=n_layers,
+                num_heads=n_heads,
+                task=task,
+                output_dim=nn_outdim,  # type: ignore
+            ).to(device)
+            t1 = time.time()
+            kappa_transformer.fit(
+                X_train_stereo, y_train, A=A_train, tqdm_prefix="kappa_transformer", **nn_train_kwargs
+            )
+            t2 = time.time()
+            y_pred = kappa_transformer.predict(X_test_stereo, A=A_test)
+            accs["kappa_transformer"] = _score(
+                None, y_test_np, None, y_pred_override=y_pred, use_torch=True, score=score
+            )
+            accs["kappa_transformer"]["time"] = t2 - t1
 
     if "kappa_mlr" in models:
         kappa_mlr = KappaGCN(pm=pm_stereo, num_hidden=0, task=task, output_dim=nn_outdim).to(device)  # type: ignore
