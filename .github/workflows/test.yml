@@ -16,9 +16,80 @@ permissions:
 # (~/.cache/huggingface) is fragile and silently breaks if the default ever changes.
 env:
   HF_HOME: ${{ github.workspace }}/.hf_cache
+  # Bump this salt to rebuild the HF dataset cache from scratch (e.g. if a previous run saved a
+  # partial/poisoned cache). The cache content is Python-version independent, so it is shared
+  # across the whole matrix.
+  HF_CACHE_VERSION: v2
 
 jobs:
+  # Download every dataset exactly once, serially, before the test matrix fans out. Previously
+  # all 5 matrix jobs + the dataloaders job hit the Hub in parallel on a cold cache, and the
+  # unauthenticated request stampede tripped HTTP 429 rate limits (intermittently failing a
+  # random job, most visibly the newest Python). Warming once with retries avoids the stampede
+  # and populates a complete cache that downstream jobs restore and read fully offline.
+  warm-hf-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Cache HuggingFace datasets
+        id: hf-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: ${{ runner.os }}-huggingface-${{ env.HF_CACHE_VERSION }}-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
+          restore-keys: |
+            ${{ runner.os }}-huggingface-${{ env.HF_CACHE_VERSION }}-
+
+      # Only download when the exact cache is missing (cold start or after a key bump). A partial
+      # restore-keys hit also lands here so any missing datasets get filled in.
+      - name: Install dependencies
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Warm dataset cache (serial, with retry/backoff on rate limits)
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        run: |
+          python - <<'EOF'
+          import sys, time
+
+          # Single source of truth for the dataset list lives in tests/conftest.py.
+          sys.path.insert(0, "tests")
+          from conftest import _HF_DATASETS
+          from manify.utils.dataloaders import load_hf
+
+          failures = []
+          for name in _HF_DATASETS:
+              for attempt in range(6):
+                  try:
+                      load_hf(name)
+                      print(f"[ok] {name}", flush=True)
+                      break
+                  except Exception as e:  # noqa: BLE001 - retry any transient Hub/network error
+                      wait = min(5 * 2 ** attempt, 60)
+                      print(f"[retry {attempt + 1}/6] {name}: {type(e).__name__}: {e} -> sleep {wait}s", flush=True)
+                      time.sleep(wait)
+              else:
+                  failures.append(name)
+              time.sleep(2)  # gentle stagger so we never hammer the Hub
+
+          if failures:
+              print(f"FAILED to warm {len(failures)} dataset(s): {failures}", flush=True)
+              sys.exit(1)
+          print("HF cache fully warmed", flush=True)
+          EOF
+
   test:
+    needs: warm-hf-cache
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false    # don’t stop the matrix if one Python version fails
@@ -36,17 +107,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      # Restore the Hugging Face dataset cache. test_embedders / test_curvature_estimation
-      # call load_hf, so even this job needs the datasets. Key is stable across runs but
-      # versioned by the dataset list so adding/removing datasets invalidates it.
+      # Restore the Hugging Face dataset cache warmed by `warm-hf-cache`. test_embedders /
+      # test_curvature_estimation call load_hf, so even this job needs the datasets. Key is stable
+      # across runs but versioned by the dataset list (and HF_CACHE_VERSION) so adding/removing
+      # datasets invalidates it.
       - name: Cache HuggingFace datasets
         id: hf-cache
         uses: actions/cache@v4
         with:
           path: ${{ env.HF_HOME }}
-          key: ${{ runner.os }}-huggingface-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
+          key: ${{ runner.os }}-huggingface-${{ env.HF_CACHE_VERSION }}-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
           restore-keys: |
-            ${{ runner.os }}-huggingface-
+            ${{ runner.os }}-huggingface-${{ env.HF_CACHE_VERSION }}-
 
       # On a cache hit, run datasets fully offline so load_dataset serves from the restored
       # cache with zero network round-trips (no per-dataset revision check, no Hub rate limits).
@@ -102,6 +174,7 @@ jobs:
 
   # Dataloaders run in parallel, for speed
   test-dataloaders:
+    needs: warm-hf-cache
     runs-on: ubuntu-latest
 
     steps:
@@ -119,9 +192,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.HF_HOME }}
-          key: ${{ runner.os }}-huggingface-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
+          key: ${{ runner.os }}-huggingface-${{ env.HF_CACHE_VERSION }}-${{ hashFiles('tests/conftest.py', 'tests/test_utils.py') }}
           restore-keys: |
-            ${{ runner.os }}-huggingface-
+            ${{ runner.os }}-huggingface-${{ env.HF_CACHE_VERSION }}-
 
       - name: Enable HuggingFace offline mode on cache hit
         if: steps.hf-cache.outputs.cache-hit == 'true'
