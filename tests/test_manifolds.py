@@ -255,6 +255,58 @@ def test_product_manifold_methods():
         X, y = pm.gaussian_mixture(num_points=100, num_classes=2, seed=42, adjust_for_dims=True)
 
 
+def test_stereographic_conversion_isometry():
+    """Stereographic conversion must preserve distances at every curvature, not just |K| == 1.
+
+    The forward projection used to fold the curvature scale into the denominator, which only matches
+    the correct formula when |K| == 1. For other curvatures the conversion silently distorted
+    distances. This escaped the existing checks in `_shared_tests` because those only run at
+    curvatures -1, 0, and 1. Here we verify, across a range of curvatures, that:
+      * converting to stereographic coordinates preserves pairwise and to-origin distances,
+      * converting back preserves them too, and
+      * the round trip returns the original points.
+    """
+    print("Testing stereographic conversion isometry across curvatures...")
+
+    curvatures = [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0]
+
+    for K in curvatures:
+        print(f"  Testing curvature K = {K}")
+        M = Manifold(K, 4, stereographic=False)
+        torch.manual_seed(0)
+        # Keep the covariance modest so points stay well away from the boundary, where float32 distance
+        # computations get noisy. The curvature-scaling bug is multiplicative, so it is glaringly visible
+        # even at these moderate distances.
+        means = torch.vstack([M.mu0] * 10)
+        covs = torch.stack([torch.eye(M.dim) * 0.1] * 10)
+        X = M.sample(z_mean=means, sigma=covs)
+
+        M_stereo, X_stereo = M.stereographic(X)
+        assert M_stereo.is_stereographic, f"Converted manifold should be stereographic for K={K}"
+        assert M_stereo.manifold.check_point(X_stereo), f"Converted points not on stereographic manifold for K={K}"
+
+        # Forward isometry: distances on the original manifold match distances on the stereographic one.
+        # The buggy formula distorted these by ~0.2-0.25 here for |K| != 1, far above this tolerance.
+        d_orig = M.dist(X, X)
+        d_stereo = M_stereo.dist(X_stereo, X_stereo)
+        assert torch.allclose(d_orig, d_stereo, atol=5e-2), (
+            f"Stereographic conversion is not isometric for K={K} "
+            f"(max diff {(d_orig - d_stereo).abs().max().item():.4f})"
+        )
+
+        # Distances to the origin should be preserved as well
+        d_orig_0 = M.dist(X, M.mu0).flatten()
+        d_stereo_0 = M_stereo.dist(X_stereo, M_stereo.mu0).flatten()
+        assert torch.allclose(d_orig_0, d_stereo_0, atol=5e-2), (
+            f"Distances to origin not preserved under stereographic conversion for K={K}"
+        )
+
+        # Round trip back to the original coordinates
+        M_back, X_back = M_stereo.inverse_stereographic(X_stereo)
+        assert not M_back.is_stereographic, f"Inverse-converted manifold should not be stereographic for K={K}"
+        assert torch.allclose(X_back, X, atol=1e-3), f"Stereographic round trip does not recover points for K={K}"
+
+
 def test_sampling_distances_to_origin():
     """Test that distances to origin follow expected statistical properties."""
     print("Testing distances to origin for wrapped normal distributions...")

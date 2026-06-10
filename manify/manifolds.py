@@ -373,9 +373,11 @@ class Manifold:
     def stereographic(self, *points: Float[torch.Tensor, "n_points n_dim"]) -> tuple[Manifold, ...]:
         r"""Convert the manifold to its stereographic equivalent. If points are given, convert them as well.
 
-        Formula for stereographic projection (for $i \geq 1$):
+        The points lie on the unit hyperboloid/sphere (geoopt uses unit curvature and carries the
+        curvature in the scale), so the unit-curvature projection is rescaled by $R = |K|^{-1/2}$
+        (for $i \geq 1$):
         \begin{equation}
-            \rho_K(x_i) = \frac{x_i}{1 + \sqrt{|K|} \cdot x_0}
+            \rho_K(x_i) = |K|^{-1/2} \cdot \frac{x_i}{1 + x_0}
         \end{equation}
 
         For more information, see https://arxiv.org/pdf/1911.08411
@@ -398,9 +400,12 @@ class Manifold:
         if self.type == "E":
             return stereo_manifold, *points
 
-        # Convert points
-        num = [X[:, 1:] for X in points]
-        denom = [1 + abs(self.curvature) ** 0.5 * X[:, 0:1] for X in points]
+        # Convert points. The points live on the *unit* hyperboloid/sphere (geoopt uses k=1 and lets
+        # the scale carry the curvature), so we apply the unit-curvature projection x_i / (1 + x_0) and
+        # then rescale by R = |K|^{-1/2} to land on the curvature-K stereographic model.
+        scale = abs(self.curvature) ** -0.5
+        num = [scale * X[:, 1:] for X in points]
+        denom = [1 + X[:, 0:1] for X in points]
         for X in denom:
             X[X.abs() < 1e-6] = 1e-6  # Avoid division by zero
         stereo_points = [n / d for n, d in zip(num, denom, strict=False)]
@@ -723,9 +728,11 @@ class ProductManifold(Manifold):
     def stereographic(self, *points: Float[torch.Tensor, "n_points n_dim"]) -> tuple[ProductManifold, ...]:
         r"""Convert the manifold to its stereographic equivalent. If points are given, convert them as well.
 
-        Formula for stereographic projection (for $i \geq 1$):
+        The points lie on the unit hyperboloid/sphere (geoopt uses unit curvature and carries the
+        curvature in the scale), so the unit-curvature projection is rescaled by $R = |K|^{-1/2}$
+        (for $i \geq 1$):
         \begin{equation}
-            \rho_K(x_i) = \frac{x_i}{1 + \sqrt{|K|} \cdot x_0}
+            \rho_K(x_i) = |K|^{-1/2} \cdot \frac{x_i}{1 + x_0}
         \end{equation}
 
         For more information, see https://arxiv.org/pdf/1911.08411
