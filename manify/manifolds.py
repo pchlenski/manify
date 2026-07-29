@@ -33,6 +33,9 @@ class Manifold:
         dim: The dimension of the manifold.
         device: The device on which the manifold is stored.
         stereographic: Whether to use stereographic coordinates.
+        dtype: The floating-point dtype for the origin, sampling, and geometric operations. Defaults to
+            ``torch.float32``. Use ``torch.float64`` for large ``|curvature| * sigma^2 * dim``, where the ambient
+            hyperboloid/sphere coordinates (``cosh``/``sin`` of the tangent norm) otherwise overflow float32.
 
     Attributes:
         curvature: The curvature of the manifold. Negative for hyperbolic, zero for Euclidean, and positive for
@@ -40,6 +43,7 @@ class Manifold:
         dim: The dimension of the manifold.
         device: The device on which the manifold is stored.
         is_stereographic: Whether stereographic coordinates are used for the manifold.
+        dtype: The floating-point dtype used for manifold tensors and operations.
         scale: The scale factor derived from the curvature.
         type: A string identifier for the manifold type ('H' for hyperbolic, 'E' for Euclidean, 'S' for spherical,
             'P' for poincaré ball, 'D' for stereographic sphere).
@@ -49,7 +53,14 @@ class Manifold:
         name: A string identifier for the manifold.
     """
 
-    def __init__(self, curvature: float, dim: int, device: str = "cpu", stereographic: bool = False):
+    def __init__(
+        self,
+        curvature: float,
+        dim: int,
+        device: str = "cpu",
+        stereographic: bool = False,
+        dtype: torch.dtype = torch.float32,
+    ):
         # Device management
         self.device = device
 
@@ -58,6 +69,7 @@ class Manifold:
         self.dim = dim
         self.scale = abs(curvature) ** -0.5 if curvature != 0 else 1
         self.is_stereographic = stereographic
+        self.dtype = dtype
 
         # A couple of manifold-specific quirks we need to deal with here
         if stereographic:
@@ -93,6 +105,11 @@ class Manifold:
                 self.mu0 = torch.Tensor([1.0] + [0.0] * dim).to(self.device).reshape(1, -1)
 
         self.name = f"{self.type}_{abs(self.curvature):.1f}^{dim}"
+
+        # Cast the geoopt manifold (incl. its learnable scale) and the origin to the requested dtype. float64
+        # is needed at large |K|*sigma^2*dim, where the ambient cosh/sin coordinates overflow float32.
+        self.manifold = self.manifold.to(self.dtype)
+        self.mu0 = self.mu0.to(self.dtype)
 
         # Couple of assertions to check
         assert self.manifold.check_point(self.mu0)
@@ -204,7 +221,7 @@ class Manifold:
         Returns:
             tangent_points: Tensor of points in the tangent plane at the origin.
         """
-        x = torch.Tensor(x).reshape(-1, self.dim)
+        x = torch.as_tensor(x, dtype=self.dtype, device=self.device).reshape(-1, self.dim)
         if self.is_stereographic:
             # Stereographic models keep the intrinsic dimension (ambient_dim == dim), so there is no
             # extra coordinate to prepend. The conformal factor at the origin is
@@ -215,7 +232,7 @@ class Manifold:
             return x / 2.0
         if self.type == "E":
             return x
-        return torch.cat([torch.zeros((x.shape[0], 1), device=self.device), x], dim=1)
+        return torch.cat([torch.zeros((x.shape[0], 1), dtype=self.dtype, device=self.device), x], dim=1)
 
     def sample(
         self,
@@ -240,11 +257,11 @@ class Manifold:
             v: Tensor of tangent vectors (if `return_tangent` is True).
         """
         z_mean = self.mu0 if z_mean is None else z_mean
-        z_mean = torch.Tensor(z_mean).reshape(-1, self.ambient_dim).to(self.device)
+        z_mean = torch.as_tensor(z_mean, dtype=self.dtype, device=self.device).reshape(-1, self.ambient_dim)
         n = z_mean.shape[0]
 
-        sigma = torch.stack([torch.eye(self.dim)] * n).to(self.device) if sigma is None else sigma
-        sigma = torch.Tensor(sigma).reshape(-1, self.dim, self.dim).to(self.device)
+        sigma = torch.stack([torch.eye(self.dim, dtype=self.dtype)] * n).to(self.device) if sigma is None else sigma
+        sigma = torch.as_tensor(sigma, dtype=self.dtype, device=self.device).reshape(-1, self.dim, self.dim)
         assert sigma.shape == (
             n,
             self.dim,
@@ -259,7 +276,7 @@ class Manifold:
 
         # Sample initial vector from N(0, sigma)
         N = torch.distributions.MultivariateNormal(
-            loc=torch.zeros((n * n_samples, self.dim), device=self.device), covariance_matrix=sigma
+            loc=torch.zeros((n * n_samples, self.dim), dtype=self.dtype, device=self.device), covariance_matrix=sigma
         )
         v = N.sample()
 
@@ -301,10 +318,10 @@ class Manifold:
         """
         # Default to mu=self.mu0 and sigma=I
         mu = self.mu0 if mu is None else mu
-        mu = torch.Tensor(mu).reshape(-1, self.ambient_dim).to(self.device)
+        mu = torch.as_tensor(mu, dtype=self.dtype, device=self.device).reshape(-1, self.ambient_dim)
         n = mu.shape[0]
-        sigma = torch.stack([torch.eye(self.dim)] * n).to(self.device) if sigma is None else sigma
-        sigma = torch.Tensor(sigma).reshape(-1, self.dim, self.dim).to(self.device)
+        sigma = torch.stack([torch.eye(self.dim, dtype=self.dtype)] * n).to(self.device) if sigma is None else sigma
+        sigma = torch.as_tensor(sigma, dtype=self.dtype, device=self.device).reshape(-1, self.dim, self.dim)
 
         # Euclidean case is regular old Gaussian log-likelihood
         if self.type == "E":
@@ -317,7 +334,7 @@ class Manifold:
         if torch.isnan(v).any():
             print("NANs in parallel transport")
             v = torch.nan_to_num(v, nan=0.0)
-        N = torch.distributions.MultivariateNormal(torch.zeros(self.dim, device=self.device), sigma)
+        N = torch.distributions.MultivariateNormal(torch.zeros(self.dim, dtype=self.dtype, device=self.device), sigma)
         ll = N.log_prob(v[:, 1:])
 
         # For convenience

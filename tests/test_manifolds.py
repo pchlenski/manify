@@ -1,4 +1,5 @@
 import geoopt
+import pytest
 import torch
 
 from manify.embedders._losses import dist_component_by_manifold  # type: ignore
@@ -493,3 +494,47 @@ def test_stereographic_sampling():
     X, y = pm_stereo.gaussian_mixture(num_points=100, num_classes=2, seed=42)
     assert X.shape == (100, pm_stereo.ambient_dim), "gaussian_mixture shape mismatch on stereographic product manifold"
     assert pm_stereo.manifold.check_point(X), "gaussian_mixture samples not on stereographic product manifold"
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_manifold_dtype_propagation(dtype):
+    """The requested dtype should flow through the origin, sampling, and distance computations."""
+    print(f"Checking dtype propagation for {dtype}...")
+    for curv in [-1.0, 0.0, 1.0]:
+        M = Manifold(curvature=curv, dim=16, dtype=dtype)
+        assert M.dtype == dtype
+        assert M.mu0.dtype == dtype
+
+        X = M.sample(20, sigma=torch.eye(16, dtype=dtype))
+        assert X.dtype == dtype, f"sample dtype mismatch for K={curv}"
+
+        D = M.pdist(X)
+        assert D.dtype == dtype, f"pdist dtype mismatch for K={curv}"
+        assert torch.isfinite(D).all(), f"distances should be finite for K={curv}"
+
+        ll = M.log_likelihood(X)
+        assert ll.dtype == dtype, f"log_likelihood dtype mismatch for K={curv}"
+
+
+def test_float64_avoids_high_curvature_overflow():
+    """Regression: the wrapped-normal sampler must stay finite at large |K| * sigma^2 * dim.
+
+    The ambient hyperboloid/sphere coordinates are cosh/sin of the tangent norm, which scales like
+    sqrt(|K| * sigma^2 * dim). Around sqrt(kappa) ~ 44 those coordinates exceed the float32 range and the
+    sampled points (and hence every distance) become non-finite. float64 pushes that boundary out to
+    sqrt(kappa) ~ 354, covering any realistic dimension.
+    """
+    torch.manual_seed(0)
+    K, dim = -1.0, 4096  # kappa = |K| * 1 * dim = 4096, well past the float32 overflow threshold
+
+    M64 = Manifold(curvature=K, dim=dim, dtype=torch.float64)
+    X64 = M64.sample(n_samples=32, sigma=torch.eye(dim, dtype=torch.float64))
+    assert torch.isfinite(X64).all(), "float64 sample should be finite at high curvature x dimension"
+    D64 = M64.pdist(X64)
+    assert torch.isfinite(D64).all(), "float64 pdist should be finite at high curvature x dimension"
+    assert (D64.triu(1) >= 0).all(), "distances should be non-negative"
+
+    # Document the motivating failure: the same configuration overflows in the default float32.
+    M32 = Manifold(curvature=K, dim=dim)
+    X32 = M32.sample(n_samples=32, sigma=torch.eye(dim))
+    assert not torch.isfinite(X32).all(), "float32 is expected to overflow here, which is why dtype is configurable"
