@@ -89,6 +89,7 @@ ignore = [
     "E501",   # Line too long (handled by formatter)
     "D107",   # Missing docstring in __init__ (pydocstyle equivalent)
     "PLR0913", # Too many arguments to function call
+    "PLR0917", # Too many positional arguments (consistent with PLR0913; stabilized out of preview in ruff 0.16)
     "PLR0912", # Too many branches
     "PLR0915", # Too many statements
     "PLR2004", # Magic value used in comparison
