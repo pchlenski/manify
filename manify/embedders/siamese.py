@@ -73,11 +73,11 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
 
         # Now we assign
         self.pm = pm
-        self.encoder = encoder
+        self.encoder = encoder.to(device=pm.device, dtype=pm.dtype)
         self.beta = beta
 
         if decoder is not None:
-            self.decoder = decoder
+            self.decoder = decoder.to(device=pm.device, dtype=pm.dtype)
         else:
             self.decoder = torch.nn.Identity()
             self.decoder.requires_grad_(False)
@@ -179,6 +179,8 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
         if self.random_state is not None:
             torch.manual_seed(self.random_state)
 
+        X = torch.as_tensor(X, dtype=self.pm.dtype, device=self.pm.device)
+        D = torch.as_tensor(D, dtype=self.pm.dtype, device=self.pm.device)
         n_samples = len(X)
 
         # Generate all upper triangular pairs using torch
@@ -285,6 +287,7 @@ class SiameseNetwork(BaseEmbedder, torch.nn.Module):
             torch.manual_seed(self.random_state)
 
         # Save the  embeddings
+        X = torch.as_tensor(X, dtype=self.pm.dtype, device=self.pm.device)
         embeddings_list = []
         for i in range(0, len(X), batch_size):
             batch = X[i : i + batch_size]

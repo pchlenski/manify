@@ -87,8 +87,8 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         BaseEmbedder.__init__(self, pm=pm, random_state=random_state, device=device)
 
         # Now we assign
-        self.encoder = encoder.to(device)
-        self.decoder = decoder.to(device)
+        self.encoder = encoder.to(device=device, dtype=pm.dtype)
+        self.decoder = decoder.to(device=device, dtype=pm.dtype)
         self.beta = beta
         self.n_samples = n_samples
         self.reconstruction_loss = (
@@ -309,6 +309,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
         if self.random_state is not None:
             torch.manual_seed(self.random_state)
 
+        X = torch.as_tensor(X, dtype=self.pm.dtype, device=self.device)
         my_tqdm = tqdm(total=(burn_in_iterations + training_iterations) * len(X))
         opt = torch.optim.Adam(
             [
@@ -381,6 +382,7 @@ class ProductSpaceVAE(BaseEmbedder, torch.nn.Module):
             torch.manual_seed(self.random_state)
 
         # Save the test embeddings
+        X = torch.as_tensor(X, dtype=self.pm.dtype, device=self.device)
         embeddings_list = []
         for i in range(0, len(X), batch_size):
             x_batch = X[i : i + batch_size]
