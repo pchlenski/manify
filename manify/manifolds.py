@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 import geoopt
 import torch
 
+from ._constants import DEFAULT_DEVICE, DEFAULT_DTYPE
+
 if TYPE_CHECKING:
     from beartype.typing import Callable, Literal
     from jaxtyping import Float, Real
@@ -34,8 +36,9 @@ class Manifold:
         device: The device on which the manifold is stored.
         stereographic: Whether to use stereographic coordinates.
         dtype: The floating-point dtype for the origin, sampling, and geometric operations. Defaults to
-            ``torch.float32``. Use ``torch.float64`` for large ``|curvature| * sigma^2 * dim``, where the ambient
-            hyperboloid/sphere coordinates (``cosh``/``sin`` of the tangent norm) otherwise overflow float32.
+            ``DEFAULT_DTYPE`` (``torch.float64``), which manifold math generally needs: the ambient
+            hyperboloid/sphere coordinates (``cosh``/``sin`` of the tangent norm) overflow float32 once
+            ``|curvature| * sigma^2 * dim`` grows. Pass ``torch.float32`` to trade that headroom for memory.
 
     Attributes:
         curvature: The curvature of the manifold. Negative for hyperbolic, zero for Euclidean, and positive for
@@ -57,9 +60,9 @@ class Manifold:
         self,
         curvature: float,
         dim: int,
-        device: str = "cpu",
+        device: str = DEFAULT_DEVICE,
         stereographic: bool = False,
-        dtype: torch.dtype = torch.float32,
+        dtype: torch.dtype = DEFAULT_DTYPE,
     ):
         # Device management
         self.device = device
@@ -411,7 +414,7 @@ class Manifold:
             return self, *points
 
         # Convert manifold
-        stereo_manifold = Manifold(self.curvature, self.dim, device=self.device, stereographic=True)
+        stereo_manifold = Manifold(self.curvature, self.dim, device=self.device, stereographic=True, dtype=self.dtype)
 
         # Euclidean edge case
         if self.type == "E":
@@ -456,7 +459,7 @@ class Manifold:
             return self, *points
 
         # Convert manifold
-        orig_manifold = Manifold(self.curvature, self.dim, device=self.device, stereographic=False)
+        orig_manifold = Manifold(self.curvature, self.dim, device=self.device, stereographic=False, dtype=self.dtype)
 
         # Euclidean edge case
         if self.type == "E":
@@ -525,9 +528,11 @@ class ProductManifold(Manifold):
         signature: List of (curvature, dimension) tuples for each factor manifold.
         device: The device on which the manifold is stored.
         stereographic: Whether to use stereographic coordinates.
+        dtype: The floating-point dtype used for all factors and operations. Defaults to ``DEFAULT_DTYPE``.
 
     Attributes:
         signature: List of tuples defining the curvature and dimension of each factor manifold.
+        dtype: The floating-point dtype used for all factors and operations.
         device: The device on which the manifold is stored.
         is_stereographic: Whether stereographic coordinates are used.
         type: String identifier for product manifold (always 'P').
@@ -547,7 +552,13 @@ class ProductManifold(Manifold):
         projection_matrix: Matrix for projecting from intrinsic to ambient dimensions.
     """
 
-    def __init__(self, signature: list[tuple[float, int]], device: str = "cpu", stereographic: bool = False):
+    def __init__(
+        self,
+        signature: list[tuple[float, int]],
+        device: str = DEFAULT_DEVICE,
+        stereographic: bool = False,
+        dtype: torch.dtype = DEFAULT_DTYPE,
+    ):
         # Device management
         self.device = device
 
@@ -558,9 +569,13 @@ class ProductManifold(Manifold):
         self.dims = [dim for _, dim in signature]
         self.n_manifolds = len(signature)
         self.is_stereographic = stereographic
+        self.dtype = dtype
 
         # Actually initialize the geoopt manifolds; other derived properties
-        self.P = [Manifold(curvature, dim, device=device, stereographic=stereographic) for curvature, dim in signature]
+        self.P = [
+            Manifold(curvature, dim, device=device, stereographic=stereographic, dtype=dtype)
+            for curvature, dim in signature
+        ]
         manifold_class = geoopt.StereographicProductManifold if stereographic else geoopt.ProductManifold
         self.manifold = manifold_class(*[(M.manifold, M.ambient_dim) for M in self.P]).to(device)
         self.name = " x ".join([M.name for M in self.P])
@@ -587,7 +602,7 @@ class ProductManifold(Manifold):
         # Lift matrix - useful for tensor stuff
         # The idea here is to right-multiply by this to lift a vector in R^dim to a vector in R^ambient_dim
         # such that there are zeros in all the right places, i.e. to make it a tangent vector at the origin of P
-        self.projection_matrix = torch.zeros(self.dim, self.ambient_dim, device=self.device)
+        self.projection_matrix = torch.zeros(self.dim, self.ambient_dim, dtype=self.dtype, device=self.device)
         for i in range(len(self.P)):
             intrinsic_dims = self.man2intrinsic[i]
             ambient_dims = self.man2dim[i]
@@ -674,14 +689,16 @@ class ProductManifold(Manifold):
             v: Tensor of tangent vectors (if `return_tangent` is True).
         """
         z_mean = self.mu0 if z_mean is None else z_mean
-        z_mean = torch.Tensor(z_mean).reshape(-1, self.ambient_dim).to(self.device)
+        z_mean = torch.as_tensor(z_mean, dtype=self.dtype, device=self.device).reshape(-1, self.ambient_dim)
         n = z_mean.shape[0]
 
         sigma_factorized = (
-            [torch.stack([torch.eye(M.dim)] * n) for M in self.P] if sigma_factorized is None else sigma_factorized
+            [torch.stack([torch.eye(M.dim, dtype=self.dtype)] * n) for M in self.P]
+            if sigma_factorized is None
+            else sigma_factorized
         )
         sigma_factorized = [
-            torch.Tensor(sigma).reshape(-1, M.dim, M.dim).to(self.device)
+            torch.as_tensor(sigma, dtype=self.dtype, device=self.device).reshape(-1, M.dim, M.dim)
             for M, sigma in zip(self.P, sigma_factorized, strict=False)
         ]
 
@@ -730,7 +747,9 @@ class ProductManifold(Manifold):
         mu = torch.vstack([self.mu0] * n).to(self.device) if mu is None else mu
 
         sigma_factorized = (
-            [torch.stack([torch.eye(M.dim)] * n) for M in self.P] if sigma_factorized is None else sigma_factorized
+            [torch.stack([torch.eye(M.dim, dtype=self.dtype)] * n) for M in self.P]
+            if sigma_factorized is None
+            else sigma_factorized
         )
         # Note that this factorization assumes block-diagonal covariance matrices
 
@@ -766,7 +785,7 @@ class ProductManifold(Manifold):
             return self, *points
 
         # Convert manifold
-        stereo_manifold = ProductManifold(self.signature, device=self.device, stereographic=True)
+        stereo_manifold = ProductManifold(self.signature, device=self.device, stereographic=True, dtype=self.dtype)
 
         # Convert points
         stereo_points = [
@@ -805,7 +824,7 @@ class ProductManifold(Manifold):
             return self, *points
 
         # Convert manifold
-        orig_manifold = ProductManifold(self.signature, device=self.device, stereographic=False)
+        orig_manifold = ProductManifold(self.signature, device=self.device, stereographic=False, dtype=self.dtype)
 
         orig_points = [
             torch.hstack([M.inverse_stereographic(x)[1] for x, M in zip(self.factorize(X), self.P, strict=False)])
@@ -861,7 +880,9 @@ class ProductManifold(Manifold):
             cov_scale_means /= self.dim
 
         # Generate cluster means
-        cluster_means = self.sample(num_clusters, sigma_factorized=[torch.eye(M.dim) * cov_scale_means for M in self.P])
+        cluster_means = self.sample(
+            num_clusters, sigma_factorized=[torch.eye(M.dim, dtype=self.dtype) * cov_scale_means for M in self.P]
+        )
         assert cluster_means.shape == (num_clusters, self.ambient_dim), "Cluster means shape mismatch."  # type: ignore
 
         # Generate class assignments
@@ -876,10 +897,10 @@ class ProductManifold(Manifold):
 
         # Generate covariance matrices for each class - Wishart distribution
         cov_matrices = [
-            torch.distributions.Wishart(df=M.dim + 1, covariance_matrix=torch.eye(M.dim) * cov_scale_points).sample(
-                sample_shape=(num_clusters,)
-            )
-            + torch.eye(M.dim) * 1e-5  # jitter to avoid singularity
+            torch.distributions.Wishart(
+                df=M.dim + 1, covariance_matrix=torch.eye(M.dim, dtype=self.dtype) * cov_scale_points
+            ).sample(sample_shape=(num_clusters,))
+            + torch.eye(M.dim, dtype=self.dtype) * 1e-5  # jitter to avoid singularity
             for M in self.P
         ]
 
@@ -906,15 +927,15 @@ class ProductManifold(Manifold):
         if task == "classification":
             labels = cluster_to_class[cluster_assignments]
         elif task == "regression":
-            slopes = (0.5 - torch.randn(num_clusters, self.dim, device=self.device)) * 2
-            intercepts = (0.5 - torch.randn(num_clusters, device=self.device)) * 20
+            slopes = (0.5 - torch.randn(num_clusters, self.dim, dtype=self.dtype, device=self.device)) * 2
+            intercepts = (0.5 - torch.randn(num_clusters, dtype=self.dtype, device=self.device)) * 20
             labels = (
                 torch.einsum("ij,ij->i", slopes[cluster_assignments], tangent_vals) + intercepts[cluster_assignments]
             )
 
             # Noise component
             N = torch.distributions.Normal(0, regression_noise_std)
-            v = N.sample((num_points,)).to(self.device)
+            v = N.sample((num_points,)).to(device=self.device, dtype=self.dtype)
             labels += v
 
             # Normalize regression labels to range [0, 1] so that RMSE can be more easily interpreted

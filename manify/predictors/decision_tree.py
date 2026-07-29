@@ -137,13 +137,13 @@ def _get_info_gains(
         neg_counts = labels.shape[0] - pos_counts
 
         # Scatter back to original row order.
-        pos_labels = torch.zeros((n_rows, n_dims, labels.shape[1]), device=angles.device)
-        neg_labels = torch.zeros((n_rows, n_dims, labels.shape[1]), device=angles.device)
+        pos_labels = torch.zeros((n_rows, n_dims, labels.shape[1]), dtype=pos_sorted.dtype, device=angles.device)
+        neg_labels = torch.zeros((n_rows, n_dims, labels.shape[1]), dtype=neg_sorted.dtype, device=angles.device)
         order_c = order.unsqueeze(-1).expand(n_rows, n_dims, labels.shape[1])
         pos_labels.scatter_(0, order_c, pos_sorted)
         neg_labels.scatter_(0, order_c, neg_sorted)
-        n_pos = torch.zeros((n_rows, n_dims), device=angles.device)
-        n_neg = torch.zeros((n_rows, n_dims), device=angles.device)
+        n_pos = torch.zeros((n_rows, n_dims), dtype=pos_counts.dtype, device=angles.device)
+        n_neg = torch.zeros((n_rows, n_dims), dtype=neg_counts.dtype, device=angles.device)
         n_pos.scatter_(0, order, pos_counts)
         n_neg.scatter_(0, order, neg_counts)
 
@@ -176,12 +176,12 @@ def _get_info_gains(
         neg_count_sorted = labels.shape[0] - pos_count_sorted
 
         # Scatter back to original row order.
-        n_pos = torch.zeros((n_rows, n_dims), device=angles.device)
-        n_neg = torch.zeros((n_rows, n_dims), device=angles.device)
-        pos_sum = torch.zeros((n_rows, n_dims), device=angles.device)
-        neg_sum = torch.zeros((n_rows, n_dims), device=angles.device)
-        pos_sumsq = torch.zeros((n_rows, n_dims), device=angles.device)
-        neg_sumsq = torch.zeros((n_rows, n_dims), device=angles.device)
+        n_pos = torch.zeros((n_rows, n_dims), dtype=pos_count_sorted.dtype, device=angles.device)
+        n_neg = torch.zeros((n_rows, n_dims), dtype=neg_count_sorted.dtype, device=angles.device)
+        pos_sum = torch.zeros((n_rows, n_dims), dtype=pos_sum_sorted.dtype, device=angles.device)
+        neg_sum = torch.zeros((n_rows, n_dims), dtype=neg_sum_sorted.dtype, device=angles.device)
+        pos_sumsq = torch.zeros((n_rows, n_dims), dtype=pos_sumsq_sorted.dtype, device=angles.device)
+        neg_sumsq = torch.zeros((n_rows, n_dims), dtype=neg_sumsq_sorted.dtype, device=angles.device)
         n_pos.scatter_(0, order, pos_count_sorted)
         n_neg.scatter_(0, order, neg_count_sorted)
         pos_sum.scatter_(0, order, pos_sum_sorted)

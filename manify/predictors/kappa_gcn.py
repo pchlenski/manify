@@ -202,11 +202,11 @@ class KappaGCN(BasePredictor, torch.nn.Module):
             y = y.long()
         elif self.task == "regression":
             loss_fn = torch.nn.MSELoss()
-            y = y.float()
+            y = y.to(self.pm.dtype)
         elif self.task == "link_prediction":
             loss_fn = torch.nn.BCEWithLogitsLoss()
             # y = y.flatten().float()
-            y = y.float()
+            y = y.to(self.pm.dtype)
         else:
             raise ValueError("Invalid task!")
 

@@ -81,7 +81,7 @@ class ProductSpaceSVM(BasePredictor):
         self.e_constraints = e_constraints
         self.eps = epsilon
         self.task = task
-        self.weights = torch.ones(len(pm.P), dtype=torch.float32) if weights is None else weights
+        self.weights = torch.ones(len(pm.P), dtype=pm.dtype) if weights is None else weights
         assert len(self.weights) == len(pm.P), "Number of weights must match the number of manifolds."
 
     def fit(
@@ -179,7 +179,7 @@ class ProductSpaceSVM(BasePredictor):
             self.b[cls_item] = float(np.ravel(b_var.value)[0])
 
         # store training data
-        self.X_train_ = torch.tensor(X_np, dtype=torch.float32)
+        self.X_train_ = torch.tensor(X_np, dtype=self.pm.dtype)
         self.is_fitted_ = True
         return self
 
@@ -195,11 +195,11 @@ class ProductSpaceSVM(BasePredictor):
         Returns:
             class_probabilities: Class probabilities for each test sample.
         """
-        X_tensor = torch.tensor(X, dtype=torch.float32) if not isinstance(X, torch.Tensor) else X
+        X_tensor = torch.as_tensor(X, dtype=self.pm.dtype)
         X_tensor = X_tensor.to(self.X_train_.device)
 
         Ks_test, _ = product_kernel(self.pm, self.X_train_, X_tensor)
-        Kt = torch.ones((self.X_train_.shape[0], X_tensor.shape[0]), device=X_tensor.device)
+        Kt = torch.ones((self.X_train_.shape[0], X_tensor.shape[0]), dtype=X_tensor.dtype, device=X_tensor.device)
         for K_m, w in zip(Ks_test, self.weights, strict=False):
             Kt += w * K_m
         Kt_np = Kt.detach().cpu().numpy()
