@@ -275,13 +275,22 @@ class Manifold:
 
         # Adjust for n_points:
         z_mean = torch.repeat_interleave(z_mean, n_samples, dim=0)
-        sigma = torch.repeat_interleave(sigma, n_samples, dim=0)
 
-        # Sample initial vector from N(0, sigma)
-        N = torch.distributions.MultivariateNormal(
-            loc=torch.zeros((n * n_samples, self.dim), dtype=self.dtype, device=self.device), covariance_matrix=sigma
-        )
-        v = N.sample()
+        # Sample initial vector from N(0, sigma). For a (batch of) diagonal covariance we sample
+        # coordinate-wise: the full MultivariateNormal path forms an (n*n_samples, dim, dim) tensor and
+        # Choleskys it -- O(dim^3) time and O(n_samples * dim^2) memory -- which is infeasible at high
+        # dimension. The common isotropic/diagonal wrapped-normal case avoids both.
+        sigma_diag = torch.diagonal(sigma, dim1=-2, dim2=-1)  # (n, dim)
+        if torch.equal(sigma, torch.diag_embed(sigma_diag)):
+            std = sigma_diag.clamp_min(0.0).sqrt().repeat_interleave(n_samples, dim=0)
+            v = torch.randn((n * n_samples, self.dim), dtype=self.dtype, device=self.device) * std
+        else:
+            sigma = torch.repeat_interleave(sigma, n_samples, dim=0)
+            N = torch.distributions.MultivariateNormal(
+                loc=torch.zeros((n * n_samples, self.dim), dtype=self.dtype, device=self.device),
+                covariance_matrix=sigma,
+            )
+            v = N.sample()
 
         # Don't need to adjust normal vectors for the Scaled manifold class in geoopt - very cool!
 

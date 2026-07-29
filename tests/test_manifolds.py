@@ -496,6 +496,40 @@ def test_stereographic_sampling():
     assert pm_stereo.manifold.check_point(X), "gaussian_mixture samples not on stereographic product manifold"
 
 
+def test_sample_diagonal_covariance_scales_to_high_dim():
+    """Diagonal covariance must sample coordinate-wise, not via a full (n_samples, dim, dim) Cholesky.
+
+    The old MultivariateNormal path formed an (n_samples, dim, dim) tensor and Choleskied it, which is
+    O(dim^3) time and O(n_samples * dim^2) memory -- infeasible at dim=4096. The diagonal fast path makes
+    identity/diagonal wrapped-normal sampling cheap at any dimension.
+    """
+    M = Manifold(curvature=-1.0, dim=4096, dtype=torch.float64)
+    X = M.sample(n_samples=128)  # sigma=None -> identity (diagonal)
+    assert X.shape == (128, M.ambient_dim)
+    assert torch.isfinite(X).all()
+    assert M.manifold.check_point(X)
+
+    # An explicit non-identity diagonal covariance takes the same fast path and reproduces its variances.
+    torch.manual_seed(0)
+    d = 6
+    E = Manifold(curvature=0.0, dim=d)  # Euclidean: sampled points equal the tangent draws
+    var = torch.rand(d, dtype=E.dtype) + 0.2
+    Xe = E.sample(n_samples=40_000, sigma=torch.diag(var))
+    assert torch.allclose(Xe.var(0), var, rtol=0.1)
+
+
+def test_sample_full_covariance_fallback():
+    """A dense (non-diagonal) covariance must fall back to the exact full-covariance path."""
+    torch.manual_seed(0)
+    d = 6
+    E = Manifold(curvature=0.0, dim=d)  # Euclidean: sampled points ~ N(0, Sigma)
+    A = torch.randn(d, d, dtype=E.dtype)
+    Sigma = A @ A.T + torch.eye(d, dtype=E.dtype)  # dense SPD
+    X = E.sample(n_samples=40_000, sigma=Sigma)
+    assert torch.isfinite(X).all()
+    assert torch.allclose(torch.cov(X.T), Sigma, atol=0.25)
+
+
 def test_default_dtype_is_float64():
     """Manifold math needs the extra range/precision, so both classes default to float64."""
     assert Manifold(curvature=-1.0, dim=4).dtype == torch.float64
