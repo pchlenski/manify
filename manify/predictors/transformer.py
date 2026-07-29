@@ -187,7 +187,7 @@ class KappaTransformer(BasePredictor, torch.nn.Module):
             y = y.long()
         else:  # regression
             loss_fn = torch.nn.MSELoss()
-            y = y.float()
+            y = y.to(self.pm.dtype)
 
         self.train()
         my_tqdm = tqdm(total=epochs, desc=tqdm_prefix) if use_tqdm else None

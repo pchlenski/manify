@@ -44,6 +44,9 @@ class KappaGCNLayer(torch.nn.Module):
         # Also store manifold
         self.manifold = manifold
 
+        # Match the manifold's dtype so params and inputs agree
+        self.to(manifold.dtype)
+
     def _left_multiply(
         self, A: Float[torch.Tensor, "n_nodes n_nodes"], X: Float[torch.Tensor, "n_nodes dim"], M: Manifold
     ) -> Float[torch.Tensor, "n_nodes dim"]:
@@ -179,6 +182,7 @@ class StereographicLogits(nn.Module):
 
         # Bias points on the manifold
         self.p_ks = geoopt.ManifoldParameter(torch.zeros(out_features, manifold.dim), manifold=manifold.manifold)
+        self.to(manifold.dtype)
 
     def _get_logits_single_manifold(
         self,
@@ -317,6 +321,8 @@ class FermiDiracDecoder(nn.Module):
             self.register_buffer("temperature", torch.tensor(1.0))
             self.register_buffer("bias", torch.tensor(0.0))
 
+        self.to(manifold.dtype)
+
     def forward(
         self, X: Float[torch.Tensor, "n_nodes dim"], A_hat: Float[torch.Tensor, "n_nodes n_nodes"] | None = None
     ) -> Float[torch.Tensor, "n_nodes n_nodes"]:
@@ -390,6 +396,7 @@ class StereographicLayerNorm(nn.Module):
 
         self.manifold = manifold
         self.norm = _tangent_module(manifold, nn.LayerNorm(embedding_dim))
+        self.to(manifold.dtype)
 
     def forward(self, X: Float[torch.Tensor, "n_nodes dim"]) -> Float[torch.Tensor, "n_nodes dim"]:
         """Apply layer normalization on the stereographic manifold."""
@@ -571,6 +578,7 @@ class StereographicAttention(nn.Module):
         self.W_o = nn.Linear(inner, dim)
 
         self.attn = GeometricLinearizedAttention(num_heads=num_heads, head_dim=head_dim)
+        self.to(manifold.dtype)
 
     def _per_head_curvatures(self) -> Float[torch.Tensor, "num_heads 1 1"]:
         """Reshape the learnable per-head curvatures for broadcasting over ``[H, N, d]``."""

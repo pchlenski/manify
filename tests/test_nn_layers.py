@@ -132,7 +132,7 @@ def test_kappa_to_zero_euclidean_limit():
     manifold and the learnable per-head curvatures vanish; we drive both to zero together.
     """
     torch.manual_seed(6)
-    X = torch.randn(6, 4) * 0.1
+    X = torch.randn(6, 4, dtype=torch.float64) * 0.1
 
     # Euclidean reference: input curvature 0 and per-head curvatures 0.
     pm0 = ProductManifold(signature=[(0.0, 4)], stereographic=True)

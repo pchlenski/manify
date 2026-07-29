@@ -477,8 +477,8 @@ def test_stereographic_sampling():
         d_ref = m_ref.dist(m_ref.sample(20000), m_ref.mu0).flatten()
         torch.manual_seed(0)
         d_stereo = m_stereo.dist(m_stereo.sample(20000), m_stereo.mu0).flatten()
-        q_ref = torch.quantile(d_ref, quantiles)
-        q_stereo = torch.quantile(d_stereo, quantiles)
+        q_ref = torch.quantile(d_ref, quantiles.to(d_ref.dtype))
+        q_stereo = torch.quantile(d_stereo, quantiles.to(d_stereo.dtype))
         max_rel_diff = ((q_ref - q_stereo).abs() / q_ref.clamp_min(1e-6)).max().item()
         assert max_rel_diff < 0.05, (
             f"Stereographic wrapped-normal does not match reference for K={K} (max rel diff {max_rel_diff:.4f})"
@@ -494,6 +494,12 @@ def test_stereographic_sampling():
     X, y = pm_stereo.gaussian_mixture(num_points=100, num_classes=2, seed=42)
     assert X.shape == (100, pm_stereo.ambient_dim), "gaussian_mixture shape mismatch on stereographic product manifold"
     assert pm_stereo.manifold.check_point(X), "gaussian_mixture samples not on stereographic product manifold"
+
+
+def test_default_dtype_is_float64():
+    """Manifold math needs the extra range/precision, so both classes default to float64."""
+    assert Manifold(curvature=-1.0, dim=4).dtype == torch.float64
+    assert ProductManifold([(-1.0, 4), (1.0, 4)]).dtype == torch.float64
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
@@ -534,7 +540,7 @@ def test_float64_avoids_high_curvature_overflow():
     assert torch.isfinite(D64).all(), "float64 pdist should be finite at high curvature x dimension"
     assert (D64.triu(1) >= 0).all(), "distances should be non-negative"
 
-    # Document the motivating failure: the same configuration overflows in the default float32.
-    M32 = Manifold(curvature=K, dim=dim)
+    # Document the motivating failure: the same configuration overflows in float32 (hence the float64 default).
+    M32 = Manifold(curvature=K, dim=dim, dtype=torch.float32)
     X32 = M32.sample(n_samples=32, sigma=torch.eye(dim))
     assert not torch.isfinite(X32).all(), "float32 is expected to overflow here, which is why dtype is configurable"
